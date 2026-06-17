@@ -86,6 +86,9 @@ OPTIONS = {
     "packages": ["rumps", "pynput", "sounddevice", "_sounddevice_data",
                  "numpy", "requests", "charset_normalizer",
                  "WebKit", "Foundation", "AppKit"],
+    # webui.py is imported lazily (inside methods) by yap.py, so name it
+    # explicitly to be sure py2app bundles it as a real importable module.
+    "includes": ["webui"],
     "iconfile": "yap.icns",
     # Bundle helper dylibs the interpreter loads via @rpath (see above).
     "frameworks": _find_rpath_dylibs(),

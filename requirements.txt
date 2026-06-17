@@ -1,7 +1,14 @@
-# Parla dependencies. Install with:
+# Yap dependencies. Install with:
 #   pip3 install -r requirements.txt
-rumps          # the menu bar app framework
-pynput         # global hotkey (hold-to-talk) + simulating Cmd+V
-sounddevice    # recording from the microphone
-numpy          # holding the audio samples in memory
-requests       # calling the Gemini API
+rumps                    # the menu bar app framework
+pynput                   # global hotkey (hold-to-talk) + simulating Cmd+V
+sounddevice              # recording from the microphone
+numpy                    # holding the audio samples in memory
+requests                 # calling the Gemini API
+pyobjc-framework-WebKit  # the embedded web-view UI (Settings / onboarding / quick panel)
+
+# Build-time only (not needed to run from source):
+#   py2app                 — bundles Yap.app
+#   Pillow                 — make_icon.py renders the menu-bar icons + app icon
+#   charset_normalizer     — install pure-Python so it bundles cleanly:
+#                            pip install --no-binary charset_normalizer charset_normalizer
