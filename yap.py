@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Parla — a personal voice-to-text menu bar app for macOS.
+Yap — a personal voice-to-text menu bar app for macOS.
 
 How it works (the 4 moving parts):
   1. CAPTURE  : pynput listens for a global "hold-to-talk" key. While you
@@ -10,7 +10,7 @@ How it works (the 4 moving parts):
   3. OUTPUT   : the result is copied to the clipboard and pasted (Cmd+V)
                 into whatever app you're currently using.
   4. SETTINGS : modes (name + prompt + hotkey) and your API key live in a
-                JSON file at ~/.parla/config.json. Edit it from the menu.
+                JSON file at ~/.yap/config.json. Edit it from the menu.
 
 Each "mode" is just a saved prompt tied to a hold-to-talk key. Hold a
 different key, get different behavior from the same speech.
@@ -22,6 +22,7 @@ import base64
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -38,9 +39,9 @@ from pynput import keyboard
 
 def log(*a):
     # Prints to the Terminal so we can see what the app is doing, AND appends to
-    # a persistent log file (~/.parla/parla.log) so we can debug the bundled app,
+    # a persistent log file (~/.yap/yap.log) so we can debug the bundled app,
     # whose stderr is invisible when it's double-clicked.
-    msg = "[parla] " + " ".join(str(x) for x in a)
+    msg = "[yap] " + " ".join(str(x) for x in a)
     print(msg, file=sys.stderr, flush=True)
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -74,9 +75,15 @@ def notify(title, subtitle, message=""):
 # Config: where settings live, and the defaults we create on first run.
 # ---------------------------------------------------------------------------
 
-CONFIG_DIR = Path.home() / ".parla"
+CONFIG_DIR = Path.home() / ".yap"
 CONFIG_PATH = CONFIG_DIR / "config.json"
-LOG_PATH = CONFIG_DIR / "parla.log"
+LOG_PATH = CONFIG_DIR / "yap.log"
+
+# The app used to be called "Parla". On first run we migrate the old settings
+# (including the saved API key) and log from ~/.parla so nothing is lost.
+OLD_CONFIG_DIR = Path.home() / ".parla"
+OLD_CONFIG_PATH = OLD_CONFIG_DIR / "config.json"
+OLD_LOG_PATH = OLD_CONFIG_DIR / "parla.log"
 
 SAMPLE_RATE = 16000  # 16 kHz mono is plenty for speech and keeps files small.
 CHANNELS = 1
@@ -154,8 +161,29 @@ DEFAULT_CONFIG = {
 }
 
 
+def _migrate_from_parla():
+    """One-time migration from the old "Parla" name.
+
+    If the new ~/.yap/config.json doesn't exist yet but an old
+    ~/.parla/config.json does, copy the settings over (API key, model, modes)
+    so nothing is lost. The old log is copied too. The old files are left in
+    place untouched — we only ever copy, never delete."""
+    try:
+        if CONFIG_PATH.exists():
+            return  # already migrated / fresh Yap config in place
+        if OLD_CONFIG_PATH.exists():
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(OLD_CONFIG_PATH, CONFIG_PATH)
+            if OLD_LOG_PATH.exists() and not LOG_PATH.exists():
+                shutil.copy2(OLD_LOG_PATH, LOG_PATH)
+            log("migrated settings from ~/.parla → ~/.yap")
+    except Exception:
+        log_exc("migration from ~/.parla failed (continuing with defaults)")
+
+
 def load_config():
     """Read config.json, creating it with defaults the first time."""
+    _migrate_from_parla()
     if not CONFIG_PATH.exists():
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_PATH, "w") as f:
@@ -288,7 +316,7 @@ def paste_text(text: str):
 # The menu bar app itself.
 # ---------------------------------------------------------------------------
 
-class ParlaApp(rumps.App):
+class YapApp(rumps.App):
     IDLE_ICON = "🎙️"
     REC_ICON = "🔴"
     BUSY_ICON = "⏳"
@@ -297,7 +325,7 @@ class ParlaApp(rumps.App):
     MAX_RECORD_SECONDS = 7 * 60
 
     def __init__(self):
-        super().__init__(ParlaApp.IDLE_ICON, quit_button=None)
+        super().__init__(YapApp.IDLE_ICON, quit_button=None)
         self.config = load_config()
         self._config_mtime = CONFIG_PATH.stat().st_mtime
         self.recorder = Recorder()
@@ -326,13 +354,13 @@ class ParlaApp(rumps.App):
             self.title = pending
         if not self.recording or self._record_start is None:
             return
-        remaining = ParlaApp.MAX_RECORD_SECONDS - (time.time() - self._record_start)
+        remaining = YapApp.MAX_RECORD_SECONDS - (time.time() - self._record_start)
         if remaining <= 0:
             log("reached 7-minute limit — stopping and processing automatically")
             self._finish_recording()
             return
         m, s = divmod(int(remaining), 60)
-        self.title = f"{ParlaApp.REC_ICON} {m}:{s:02d}"
+        self.title = f"{YapApp.REC_ICON} {m}:{s:02d}"
 
     def _set_title(self, value):
         """Request a menu-bar icon/title change from ANY thread.
@@ -368,7 +396,7 @@ class ParlaApp(rumps.App):
             rumps.MenuItem("Restore default prompts", callback=self.restore_defaults),
             rumps.MenuItem("Reload settings", callback=self.reload_settings),
             None,
-            rumps.MenuItem("Quit Parla", callback=rumps.quit_application),
+            rumps.MenuItem("Quit Yap", callback=rumps.quit_application),
         ]
         self.menu = items
 
@@ -390,27 +418,14 @@ class ParlaApp(rumps.App):
             if key:
                 self.config["api_key"] = key
                 self._save_config()
-                notify("Parla", "API key saved", "")
+                notify("Yap", "API key saved", "")
 
     def edit_settings(self, _):
         """Open the visual settings window.
 
-        We relaunch THIS program with the PARLA_SETTINGS flag set, instead of
-        launching settings_gui.py as a separate script. Inside a bundled .app,
-        sys.executable is the app stub (not python3), so the old "run a second
-        script" trick was unreliable; relaunching ourselves works in both cases
-        (from source and from the bundle). The flagged process shows the
-        Tkinter editor (see the __main__ block) instead of the menu bar app.
-        """
-        env = dict(os.environ, PARLA_SETTINGS="1")
-        args = [sys.executable]
-        if not getattr(sys, "frozen", False):
-            # From source, sys.executable is python3 — tell it which file to run.
-            args.append(os.path.abspath(__file__))
-        try:
-            subprocess.Popen(args, env=env)
-        except Exception:
-            self.open_config_file(None)
+        (Replaced in a later step with an embedded web-view editor; for now this
+        opens the config file as a reliable fallback.)"""
+        self.open_config_file(None)
 
     def open_config_file(self, _):
         # Opens config.json in the default text editor (a reliable fallback).
@@ -422,14 +437,14 @@ class ParlaApp(rumps.App):
         default prompts without hand-editing."""
         self.config["modes"] = [dict(m) for m in DEFAULT_CONFIG["modes"]]
         self._save_config()
-        notify("Parla", "Default prompts restored", "")
+        notify("Yap", "Default prompts restored", "")
 
     def reload_settings(self, _):
         self.config = load_config()
         self._config_mtime = CONFIG_PATH.stat().st_mtime
         self.hotkey_map = {m["hotkey"]: m for m in self.config["modes"]}
         self._build_menu()
-        notify("Parla", "Settings reloaded", "")
+        notify("Yap", "Settings reloaded", "")
 
     def _save_config(self):
         with open(CONFIG_PATH, "w") as f:
@@ -493,14 +508,14 @@ class ParlaApp(rumps.App):
         try:
             self.recorder.start()
             self._record_start = time.time()
-            m, s = divmod(ParlaApp.MAX_RECORD_SECONDS, 60)
-            self._set_title(f"{ParlaApp.REC_ICON} {m}:{s:02d}")
+            m, s = divmod(YapApp.MAX_RECORD_SECONDS, 60)
+            self._set_title(f"{YapApp.REC_ICON} {m}:{s:02d}")
             log("RECORDING started for mode:", mode["name"],
                 "— keep holding Right Option, release it to finish")
         except Exception as e:
             self.recording = False
             self.active_mode = None
-            self._set_title(ParlaApp.IDLE_ICON)
+            self._set_title(YapApp.IDLE_ICON)
             log("ERROR starting microphone:", e)
 
     def _on_release(self, key):
@@ -522,7 +537,7 @@ class ParlaApp(rumps.App):
         log("RECORDING stopped, audio bytes:", len(wav_bytes))
         mode = self.active_mode
         self.active_mode = None
-        self._set_title(ParlaApp.BUSY_ICON)
+        self._set_title(YapApp.BUSY_ICON)
         # Do the network call off the main thread so the UI stays responsive.
         threading.Thread(target=self._process, args=(wav_bytes, mode), daemon=True).start()
 
@@ -531,14 +546,14 @@ class ParlaApp(rumps.App):
             # Ignore accidental taps (less than ~0.3s of audio).
             if len(wav_bytes) < SAMPLE_RATE * 2 * 0.3:
                 log("audio too short, skipping (did the mic record anything?)")
-                self._set_title(ParlaApp.IDLE_ICON)
+                self._set_title(YapApp.IDLE_ICON)
                 return
             api_key = self.config.get("api_key", "")
             if not api_key or api_key == DEFAULT_CONFIG["api_key"]:
                 log("no API key set")
-                notify("Parla", "No API key set",
+                notify("Yap", "No API key set",
                        "Open Edit settings and paste your Gemini API key.")
-                self._set_title(ParlaApp.IDLE_ICON)
+                self._set_title(YapApp.IDLE_ICON)
                 return
             log("sending to Gemini…")
             text = transcribe_with_gemini(
@@ -554,32 +569,16 @@ class ParlaApp(rumps.App):
         except requests.HTTPError as e:
             body = getattr(e.response, "text", "")[:400]
             log("Gemini HTTP error:", e, body)
-            notify("Parla", "Gemini busy, try again", "The model was overloaded.")
+            notify("Yap", "Gemini busy, try again", "The model was overloaded.")
         except Exception as e:
             log_exc("ERROR in _process")
-            notify("Parla", "Something went wrong", str(e))
+            notify("Yap", "Something went wrong", str(e))
         finally:
-            self._set_title(ParlaApp.IDLE_ICON)
+            self._set_title(YapApp.IDLE_ICON)
 
 
 if __name__ == "__main__":
-    # When relaunched in "settings mode" (by edit_settings), show the visual
-    # editor and exit instead of starting the menu bar app. This is how the
-    # settings window opens both from source and inside the bundled .app.
-    if os.environ.get("PARLA_SETTINGS") == "1":
-        # Inside the bundle, tkinter needs to be told where the bundled Tcl/Tk
-        # script libraries live (they're under Resources/lib/tclX). py2app does
-        # this automatically for framework Pythons but not for conda builds.
-        if getattr(sys, "frozen", False):
-            res = Path(sys.executable).resolve().parent.parent / "Resources" / "lib"
-            for var, sub in (("TCL_LIBRARY", "tcl8.6"), ("TK_LIBRARY", "tk8.6")):
-                p = res / sub
-                if p.is_dir():
-                    os.environ.setdefault(var, str(p))
-        import settings_gui
-        settings_gui.main()
-        sys.exit(0)
-    if os.environ.get("PARLA_SELFTEST") == "1":
+    if os.environ.get("YAP_SELFTEST") == "1":
         log("SELFTEST start. frozen=%r" % getattr(sys, "frozen", False))
         # the exact Gemini request mechanism (dummy key -> expect HTTP 400/403,
         # which proves requests + TLS work; an SSL/conn error would prove they don't)
@@ -590,10 +589,10 @@ if __name__ == "__main__":
             log("SELFTEST gemini raised:", repr(e))
         # paste mechanism (pbcopy + pynput Cmd+V)
         try:
-            paste_text("parla-selftest"); log("SELFTEST paste OK")
+            paste_text("yap-selftest"); log("SELFTEST paste OK")
         except Exception as e:
             log_exc("SELFTEST paste FAIL")
         log("SELFTEST done")
         sys.exit(0)
     log("starting. Hold Right Option (⌥) and speak. Watch these lines while you test.")
-    ParlaApp().run()
+    YapApp().run()

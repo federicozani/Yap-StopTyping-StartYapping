@@ -1,8 +1,8 @@
 """
-Bundles Parla into a double-clickable Parla.app using py2app.
+Bundles Yap into a double-clickable Yap.app using py2app.
 
 Run:  python3 setup_app.py py2app
-Output: dist/Parla.app
+Output: dist/Yap.app
 """
 
 import os
@@ -27,9 +27,9 @@ def _find_rpath_dylibs():
     """
     # libffi -> needed by ctypes at boot; libssl/libcrypto -> needed by the ssl
     # module (without them, every HTTPS call to Gemini fails with "the SSL module
-    # is not available"); libtcl/libtk -> needed by tkinter (settings window).
-    candidates = ["libffi.8.dylib", "libssl.3.dylib", "libcrypto.3.dylib",
-                  "libtcl8.6.dylib", "libtk8.6.dylib"]
+    # is not available"). The Settings/onboarding UI is now an embedded WKWebView
+    # (WebKit is a system framework), so the old Tcl/Tk dylibs are no longer needed.
+    candidates = ["libffi.8.dylib", "libssl.3.dylib", "libcrypto.3.dylib"]
     lib_dirs = [os.path.join(p, "lib")
                 for p in {sys.prefix, getattr(sys, "base_prefix", sys.prefix)}]
     found = []
@@ -42,60 +42,58 @@ def _find_rpath_dylibs():
     return found
 
 
-def _tcltk_data_files():
-    """Bundle the Tcl/Tk script libraries (init.tcl etc.) so tkinter can
-    initialise inside the .app. py2app copies these automatically for
-    framework Pythons but not for conda, so we add them as data files under
-    Resources/lib/<tclX>. parla.py points TCL_LIBRARY/TK_LIBRARY here at runtime.
-    Empty (no-op) when these dirs don't exist (e.g. non-conda Python).
-    """
-    base = os.path.join(getattr(sys, "base_prefix", sys.prefix), "lib")
+def _tree_data_files(folder):
+    """Recursively collect every file under `folder` as py2app data_files,
+    preserving the relative directory layout inside the bundle's Resources.
+    Used to ship the web UI (web/) and the menu-bar state icons (assets/).
+    No-op when the folder doesn't exist."""
     entries = []
-    for name in ("tcl8.6", "tk8.6", "tcl8"):
-        root = os.path.join(base, name)
-        if not os.path.isdir(root):
+    if not os.path.isdir(folder):
+        return entries
+    for dirpath, _dirs, files in os.walk(folder):
+        real = [f for f in files if not f.startswith(".")]
+        if not real:
             continue
-        for dirpath, _dirs, files in os.walk(root):
-            if not files:
-                continue
-            dest = os.path.join("lib", os.path.relpath(dirpath, base))
-            entries.append((dest, [os.path.join(dirpath, f) for f in files]))
+        dest = os.path.relpath(dirpath, ".")
+        entries.append((dest, [os.path.join(dirpath, f) for f in real]))
     return entries
 
 
-APP = ["parla.py"]
-# settings_gui.py ships alongside so the visual editor is available; the Tcl/Tk
-# script libraries are bundled so the Tkinter settings window works in the .app.
-DATA_FILES = ["settings_gui.py"] + _tcltk_data_files()
+APP = ["yap.py"]
+# Ship the embedded web UI (Settings/onboarding/quick panel) and the menu-bar
+# lifecycle icons so they're available inside the bundle's Resources.
+DATA_FILES = _tree_data_files("web") + _tree_data_files("assets")
 OPTIONS = {
     "argv_emulation": False,
     "plist": {
         "LSUIElement": True,  # menu bar only, no Dock icon / no app window
-        "CFBundleName": "Parla",
+        "CFBundleName": "Yap",
+        "CFBundleDisplayName": "Yap",
         # A stable identifier so macOS treats every rebuild as the same app
         # (helps it remember the Microphone / Accessibility / Input Monitoring
-        # permissions instead of seeing a brand-new app each time).
-        "CFBundleIdentifier": "com.parla.app",
-        "NSMicrophoneUsageDescription": "Parla records your voice to transcribe it.",
+        # permissions instead of seeing a brand-new app each time). Note: this
+        # differs from the old "com.parla.app", so macOS will ask for the three
+        # permissions once more on Yap's first launch — expected after the rename.
+        "CFBundleIdentifier": "com.yap.app",
+        "NSMicrophoneUsageDescription": "Yap records your voice to transcribe it.",
     },
     # sounddevice ships its PortAudio binary inside the _sounddevice_data
     # package; both must stay UNZIPPED (listed here) so the .dylib can be
-    # dlopen'd at runtime — dylibs can't load from inside python312.zip.
+    # dlopen'd at runtime — dylibs can't load from inside pythonNN.zip.
     # charset_normalizer is requests' (lazily imported) encoding detector;
     # naming it here ensures py2app bundles it so requests is fully functional.
+    # WebKit/Foundation/AppKit (PyObjC) power the embedded web-view UI.
     "packages": ["rumps", "pynput", "sounddevice", "_sounddevice_data",
-                 "numpy", "requests", "charset_normalizer"],
-    # settings_gui is imported by parla.py when relaunched in settings mode, so
-    # it must be a real importable module inside the bundle (not just a data file).
-    "includes": ["tkinter", "settings_gui"],
-    "iconfile": "parla.icns",
+                 "numpy", "requests", "charset_normalizer",
+                 "WebKit", "Foundation", "AppKit"],
+    "iconfile": "yap.icns",
     # Bundle helper dylibs the interpreter loads via @rpath (see above).
     "frameworks": _find_rpath_dylibs(),
 }
 
 setup(
     app=APP,
-    name="Parla",
+    name="Yap",
     data_files=DATA_FILES,
     options={"py2app": OPTIONS},
     setup_requires=["py2app"],
