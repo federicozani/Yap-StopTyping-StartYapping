@@ -1,0 +1,188 @@
+{
+  "$meta": {
+    "product": "Yap",
+    "description": "Design tokens for the Yap macOS menu-bar dictation app. Values are in points/pixels at 1x (1pt = 1px on a non-Retina display; multiply by 2 for @2x assets). Colors are sRGB hex unless an alpha (rgba) is given.",
+    "version": "1.0",
+    "updated": "2026-06-17"
+  },
+
+  "color": {
+    "brand": {
+      "gradientPrimary": { "from": "#9B45E8", "to": "#FF5BA6", "angleDeg": 135, "note": "The signature Yap gradient. Purple -> pink, top-left to bottom-right." },
+      "gradientPrimaryStops3": ["#A347EC", "#C247CB", "#FF5BA6"],
+      "purple": "#9B45E8",
+      "purpleDeep": "#7C46E8",
+      "purpleAlt": "#A347EC",
+      "magenta": "#C247CB",
+      "magentaAlt": "#B048D0",
+      "pink": "#FF5BA6",
+      "pinkText": "#E0479A",
+      "pinkSoft": "#FF8EC4",
+      "coral": "#FF8A5B"
+    },
+    "ink": {
+      "900": "#2A0E3A",
+      "850": "#3A1155",
+      "800": "#3A2150",
+      "700": "#5C4470",
+      "600": "#6B5680",
+      "550": "#7A5C92",
+      "500": "#8A6FA0",
+      "400": "#9A7DB2",
+      "300": "#A48ABA",
+      "250": "#B9A6CC",
+      "note": "ink.900 = primary headings/text. ink.600 = body. ink.500 = secondary/muted. ink.400 = section eyebrow labels. ink.300 = faint footnotes."
+    },
+    "surface": {
+      "boardBg": "#ece7f3",
+      "boardGlowPurple": "#f3e9fb",
+      "boardGlowPink": "#fbe7f3",
+      "white": "#ffffff",
+      "tintLavender": "#FBF8FE",
+      "tintLavender2": "#F7F1FC",
+      "tintLavender3": "#FAF6FD",
+      "tintPurpleHi": "#faf2ff",
+      "tintPinkHi": "#fff0f8",
+      "chipPurple": "#F1E2FB",
+      "chipPink": "#FCE2EF",
+      "chipNeutral": "#F2EAF9",
+      "rowDivider": "#F2ECF8",
+      "windowTitlebarTop": "#fbf8fe",
+      "windowTitlebarBottom": "#f4eefb"
+    },
+    "border": {
+      "hairline06": "rgba(42,14,58,0.06)",
+      "hairline08": "rgba(42,14,58,0.08)",
+      "hairline10": "rgba(42,14,58,0.10)",
+      "hairline12": "rgba(42,14,58,0.12)",
+      "purpleField": "#ECDDF4",
+      "purpleFieldAlt": "#EEE2F8",
+      "purpleCard": "#F0DDF6",
+      "key": "#E2D2EE",
+      "keyAlt": "#E8D8F4",
+      "rowLine": "#F0E8F7",
+      "swatch": "#E4D8EF",
+      "dashed": "#DCC8EC",
+      "pinkCard": "#F6D9E9",
+      "pinkKey": "#F2D2E0",
+      "pinkKeyAlt": "#F4D6E5"
+    },
+    "status": {
+      "recordingDot": "#FF4D4D",
+      "recordingGradient": { "from": "#E0479A", "to": "#FF5BA6" },
+      "successGreen": "#28C840",
+      "highlightYellow": "#FFE9A8",
+      "trafficRed": "#FF5F57",
+      "trafficYellow": "#FEBC2E",
+      "trafficGreen": "#28C840",
+      "toggleOnGradient": { "from": "#9B45E8", "to": "#FF5BA6" },
+      "toggleOffTrack": "#E4D8EF",
+      "toggleKnob": "#ffffff"
+    },
+    "fish": {
+      "bodyWhite": "#ffffff",
+      "bodyDarkOnLight": "#2A0E3A",
+      "eye": "#3A1155",
+      "eyeHighlight": "#ffffff",
+      "tailPink": "#FF8EC4",
+      "bellyTint": "#FFD0E8",
+      "blushTint": "#FFB4D8"
+    }
+  },
+
+  "typography": {
+    "fontFamily": {
+      "display": "Bricolage Grotesque",
+      "displayFallback": "Bricolage Grotesque, 'Trebuchet MS', Verdana, sans-serif",
+      "ui": "Hanken Grotesk",
+      "uiFallback": "Hanken Grotesk, -apple-system, 'SF Pro Text', Helvetica Neue, sans-serif",
+      "note": "Both are Google Fonts. Display is used for headings, the wordmark, hotkey names and button labels. UI is used for body copy, captions, keycaps and form values."
+    },
+    "weight": { "regular": 400, "medium": 500, "semibold": 600, "bold": 700, "extrabold": 800 },
+    "scale": {
+      "heroDisplay":    { "font": "display", "size": 46, "weight": 800, "lineHeight": 1.0,  "tracking": -1.5 },
+      "windowTitle":    { "font": "display", "size": 34, "weight": 800, "lineHeight": 1.05, "tracking": -1.0 },
+      "wordmark":       { "font": "display", "size": 34, "weight": 800, "lineHeight": 1.0,  "tracking": -1.0 },
+      "sectionTitle":   { "font": "display", "size": 24, "weight": 800, "lineHeight": 1.1,  "tracking": -0.5 },
+      "cardTitleLg":    { "font": "display", "size": 22, "weight": 800, "lineHeight": 1.1,  "tracking": -0.5 },
+      "hotkeyName":     { "font": "display", "size": 18, "weight": 800, "lineHeight": 1.2,  "tracking": 0 },
+      "panelTitle":     { "font": "display", "size": 20, "weight": 800, "lineHeight": 1.1,  "tracking": -0.3 },
+      "buttonLg":       { "font": "display", "size": 17, "weight": 700, "lineHeight": 1.0 },
+      "buttonMd":       { "font": "display", "size": 15, "weight": 700, "lineHeight": 1.0 },
+      "leadBody":       { "font": "ui", "size": 17, "weight": 400, "lineHeight": 1.55 },
+      "body":           { "font": "ui", "size": 15, "weight": 400, "lineHeight": 1.5 },
+      "rowTitle":       { "font": "ui", "size": 14.5, "weight": 700, "lineHeight": 1.3 },
+      "rowTitleSm":     { "font": "ui", "size": 14, "weight": 700, "lineHeight": 1.3 },
+      "bodySm":         { "font": "ui", "size": 13.5, "weight": 400, "lineHeight": 1.5 },
+      "bodyXs":         { "font": "ui", "size": 13, "weight": 400, "lineHeight": 1.5 },
+      "caption":        { "font": "ui", "size": 12.5, "weight": 400, "lineHeight": 1.4 },
+      "captionSm":      { "font": "ui", "size": 12, "weight": 400, "lineHeight": 1.4 },
+      "footnote":       { "font": "ui", "size": 11.5, "weight": 400, "lineHeight": 1.4 },
+      "eyebrowLg":      { "font": "display", "size": 13, "weight": 700, "lineHeight": 1.2, "tracking": 1.5, "transform": "uppercase" },
+      "eyebrowSm":      { "font": "ui", "size": 11, "weight": 700, "lineHeight": 1.2, "tracking": 0.5, "transform": "uppercase" },
+      "tag":            { "font": "ui", "size": 11, "weight": 700, "lineHeight": 1.0, "tracking": 0.4, "transform": "uppercase" },
+      "keycap":         { "font": "ui", "size": 15, "weight": 700, "lineHeight": 1.0 },
+      "keycapSm":       { "font": "ui", "size": 13, "weight": 700, "lineHeight": 1.0 }
+    }
+  },
+
+  "spacing": {
+    "note": "Base unit is loosely 2px; the design uses this irregular but consistent step set.",
+    "scale": [4, 6, 8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 26, 30, 40, 44, 48, 54, 56, 64],
+    "windowPaddingX": 30,
+    "windowPaddingY": 26,
+    "cardPadding": 20,
+    "rowPaddingY": 15,
+    "controlGap": 8
+  },
+
+  "radius": {
+    "xs": 4,
+    "sm": 7,
+    "key": 9,
+    "chip": 10,
+    "control": 11,
+    "card": 12,
+    "cardLg": 13,
+    "field": 14,
+    "panel": 18,
+    "iconSquircle": 39,
+    "iconSquircleRatio": 0.227,
+    "menubarGlyph": 7,
+    "pill": 20,
+    "circle": "50%",
+    "note": "iconSquircle 39px is for the 172px app-icon render (~22.7% of side). For the 1024px master icon use 232px corner radius, or generate as an Apple-style 'squircle'/superellipse (see notes)."
+  },
+
+  "border-width": {
+    "hairline": 1,
+    "field": 1,
+    "selectedRing": 2,
+    "dashed": 2,
+    "keycapBottom": 3,
+    "note": "Keycaps use a 1px border on top/left/right and a 3px bottom border to fake key depth."
+  },
+
+  "shadow": {
+    "boardCard":   "0 1px 3px rgba(42,14,58,0.10)",
+    "window":      "0 22px 54px rgba(42,14,58,0.20), 0 2px 8px rgba(42,14,58,0.08)",
+    "quickPanel":  "0 26px 60px rgba(42,14,58,0.28)",
+    "appIcon":     "0 22px 44px rgba(155,69,232,0.42), inset 0 2px 6px rgba(255,255,255,0.45)",
+    "appIconSm":   "0 8px 20px rgba(155,69,232,0.35)",
+    "buttonPrimary":"0 10px 24px rgba(184,69,200,0.40)",
+    "buttonPrimarySm":"0 8px 18px rgba(184,69,200,0.35)",
+    "chipPurple":  "0 6px 14px rgba(155,69,232,0.35)",
+    "chipPink":    "0 6px 14px rgba(255,91,166,0.35)",
+    "promptEditor":"0 8px 22px rgba(42,14,58,0.06)",
+    "menubarRecording":"0 3px 9px rgba(255,91,166,0.40)",
+    "menubarWorking":"0 3px 9px rgba(124,70,232,0.35)"
+  },
+
+  "motion": {
+    "recordingDotPulse": { "keyframe": "yapBob", "duration": "1.1s", "easing": "ease-in-out", "loop": true, "note": "Recording red dot gently bobs/pulses." },
+    "workingBubbles": { "keyframe": "bubble", "duration": "1.4s", "easing": "ease-in-out", "loop": true, "stagger": "0.45s", "note": "3 white bubbles rise and fade from the fish while processing." },
+    "waveform": { "keyframe": "wave", "duration": "1.0s", "easing": "ease-in-out", "loop": true, "stagger": "0.15s", "note": "6 bars scale vertically 0.35 -> 1.0 in the listening panel." },
+    "mascotFloat": { "keyframe": "yapFloat", "duration": "4s", "easing": "ease-in-out", "loop": true, "note": "Hero mascot floats up/down with a slight rotation." },
+    "listeningRings": { "keyframe": "ring", "duration": "2.6s", "easing": "ease-out", "loop": true, "stagger": "0.8s", "note": "Concentric rings expand and fade behind the hero mascot." }
+  }
+}

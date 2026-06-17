@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' dist/Parla.app/Contents/Info.plist)",
+      "Bash(git add *)",
+      "Bash(git -c user.name=fix-driver -c user.email=fix-driver@local commit -q -m 'fix-driver: crash-proof icon updates + stable bundle id \\(fix recording regression\\) *)"
+    ]
+  }
+}
