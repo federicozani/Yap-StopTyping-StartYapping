@@ -308,4 +308,10 @@ textarea.prompt:focus { border-color: var(--brand-purple); box-shadow: 0 0 0 3px
 #last-text { background: var(--tint-lavender); border-radius: var(--r-chip); padding: 10px 12px;
   font-size: 13px; color: var(--ink-700); line-height: 1.5; max-height: 80px; overflow: auto; }
 .p-footer { background: var(--tint-lavender-3); border-top: 1px solid var(--row-line);
-  text-align: center; font-size: 11.5px; color: var(--ink-300); padding: 9px; }
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11.5px; color: var(--ink-300); padding: 8px 14px; }
+.p-foot-tip { color: var(--ink-300); }
+.p-foot-quit { background: transparent; border: none; cursor: pointer;
+  font-family: var(--font-ui); font-size: 11.5px; font-weight: 600; color: var(--ink-550);
+  padding: 3px 8px; border-radius: 7px; }
+.p-foot-quit:hover { background: #FFF0F2; color: var(--rec-dot); }

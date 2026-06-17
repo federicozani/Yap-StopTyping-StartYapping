@@ -355,6 +355,8 @@ class YapApp(rumps.App):
         self._onboarding_ctrl = None
         self._panel = None
         self._panel_autoshown = False
+        self._click_installed = False  # menu-bar icon click routing set up yet?
+        self._statusmenu = None        # the NSMenu (kept for right-click)
         self._config_mtime = CONFIG_PATH.stat().st_mtime
         self.recorder = Recorder()
         self.recording = False
@@ -408,6 +410,10 @@ class YapApp(rumps.App):
     def _tick(self, _):
         """Runs ~4x/second ON THE MAIN THREAD. Applies any pending state change,
         shows the live recording countdown, and reverts the 'done' check."""
+        # Once the run loop is up, route the menu-bar icon's click to the quick
+        # panel (left-click) and keep the full menu on right/Control-click.
+        if not self._click_installed:
+            self._install_icon_click()
         # On the very first run, greet the user with the onboarding window once
         # the app's run loop is up (doing it here keeps it on the main thread).
         if self._first_run:
@@ -626,6 +632,41 @@ class YapApp(rumps.App):
         self._panel.push_js("yapPanel", self._panel_state())
         self._panel.show_at(self._panel_anchor())
 
+    def _install_icon_click(self):
+        """Make a normal click on the menu-bar icon open the quick panel instead
+        of the dropdown menu. The menu is detached from the status item and shown
+        only on right/Control-click, so every action (Quit included) stays
+        reachable. Runs once, on the main thread, after the run loop is up."""
+        try:
+            statusitem = self._nsapp.nsstatusitem
+            button = statusitem.button()
+            if button is None:
+                return  # run loop not fully up yet; try again next tick
+            import webui
+            self._statusmenu = statusitem.menu()  # capture the live NSMenu
+            statusitem.setMenu_(None)             # detach so clicks fire our action
+            webui.install_status_click(button, self.toggle_panel_click,
+                                       self._show_status_menu)
+            self._click_installed = True
+            log("menu-bar icon: left-click → quick panel, right-click → menu")
+        except Exception:
+            # Leave _click_installed False so we retry; if it never succeeds the
+            # menu simply stays as-is (nothing is lost).
+            log_exc("failed to install icon click handler")
+
+    def toggle_panel_click(self):
+        self.toggle_panel(None)
+
+    def _show_status_menu(self):
+        """Show the full menu under the icon (right/Control-click)."""
+        try:
+            menu = self._statusmenu
+            button = self._nsapp.nsstatusitem.button()
+            if menu is not None and button is not None:
+                menu.popUpMenuPositioningItem_atLocation_inView_(None, (0, 0), button)
+        except Exception:
+            log_exc("failed to show status menu")
+
     def toggle_panel(self, _):
         self._ensure_panel()
         if self._panel is None:
@@ -642,6 +683,8 @@ class YapApp(rumps.App):
             ctrl.push_js("yapPanel", self._panel_state())
         elif action == "openSettings":
             self.edit_settings(None)
+        elif action == "quit":
+            rumps.quit_application()
         elif action == "copyLast":
             if self.last_yap:
                 try:

@@ -208,6 +208,9 @@ function initPanel() {
   document.querySelectorAll("[data-copy]").forEach(function (b) {
     b.addEventListener("click", function () { send("copyLast"); });
   });
+  document.querySelectorAll("[data-quit]").forEach(function (b) {
+    b.addEventListener("click", function () { send("quit"); });
+  });
   send("ready");
 }
 window.yapPanel = function (state) {

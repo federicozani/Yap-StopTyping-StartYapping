@@ -24,6 +24,8 @@ from AppKit import (
     NSWindowStyleMaskFullSizeContentView, NSWindowTitleHidden,
     NSWindowStyleMaskBorderless, NSWindowStyleMaskNonactivatingPanel,
     NSPopUpMenuWindowLevel, NSWindowCollectionBehaviorCanJoinAllSpaces,
+    NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp,
+    NSEventTypeRightMouseUp, NSEventModifierFlagControl,
 )
 from Foundation import NSObject, NSURL, NSMakeRect
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserContentController
@@ -240,3 +242,40 @@ def open_panel(html_path, web_root, size=(344, 500), on_message=None):
 
     _LIVE.add(ctrl)
     return ctrl
+
+
+# ---------------------------------------------------------------------------
+# Menu-bar status-item click routing
+# ---------------------------------------------------------------------------
+
+class _StatusClick(NSObject):
+    """Target for the menu-bar status item's button. A normal (left) click runs
+    `on_left`; a right-click or Control-click runs `on_right`."""
+
+    def clicked_(self, sender):
+        try:
+            ev = NSApp.currentEvent()
+            right = False
+            if ev is not None:
+                right = (ev.type() == NSEventTypeRightMouseUp
+                         or bool(ev.modifierFlags() & NSEventModifierFlagControl))
+            fn = self._on_right if right else self._on_left
+            if fn is not None:
+                fn()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+
+def install_status_click(button, on_left, on_right):
+    """Route clicks on the menu-bar status item's `button` to Python callables.
+    Returns the handler (kept alive in _LIVE). Caller must first detach the
+    status item's menu (setMenu_(None)) so the button fires this action."""
+    handler = _StatusClick.alloc().init()
+    handler._on_left = on_left
+    handler._on_right = on_right
+    button.setTarget_(handler)
+    button.setAction_("clicked:")
+    button.sendActionOn_(NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp)
+    _LIVE.add(handler)
+    return handler
