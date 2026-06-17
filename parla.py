@@ -354,15 +354,22 @@ class ParlaApp(rumps.App):
                 notify("Parla", "API key saved", "")
 
     def edit_settings(self, _):
-        """Open the visual settings window (a separate Tkinter program)."""
-        gui = Path(__file__).resolve().parent / "settings_gui.py"
-        # Inside a bundled .app the separate-script trick isn't reliable, so we
-        # fall back to opening the config file in a text editor there.
-        if getattr(sys, "frozen", False) or not gui.exists():
-            self.open_config_file(None)
-            return
+        """Open the visual settings window.
+
+        We relaunch THIS program with the PARLA_SETTINGS flag set, instead of
+        launching settings_gui.py as a separate script. Inside a bundled .app,
+        sys.executable is the app stub (not python3), so the old "run a second
+        script" trick was unreliable; relaunching ourselves works in both cases
+        (from source and from the bundle). The flagged process shows the
+        Tkinter editor (see the __main__ block) instead of the menu bar app.
+        """
+        env = dict(os.environ, PARLA_SETTINGS="1")
+        args = [sys.executable]
+        if not getattr(sys, "frozen", False):
+            # From source, sys.executable is python3 — tell it which file to run.
+            args.append(os.path.abspath(__file__))
         try:
-            subprocess.Popen([sys.executable, str(gui)])
+            subprocess.Popen(args, env=env)
         except Exception:
             self.open_config_file(None)
 
@@ -519,5 +526,12 @@ class ParlaApp(rumps.App):
 
 
 if __name__ == "__main__":
+    # When relaunched in "settings mode" (by edit_settings), show the visual
+    # editor and exit instead of starting the menu bar app. This is how the
+    # settings window opens both from source and inside the bundled .app.
+    if os.environ.get("PARLA_SETTINGS") == "1":
+        import settings_gui
+        settings_gui.main()
+        sys.exit(0)
     log("starting. Hold Right Option (⌥) and speak. Watch these lines while you test.")
     ParlaApp().run()
