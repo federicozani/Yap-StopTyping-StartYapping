@@ -1,0 +1,7 @@
+# Parla dependencies. Install with:
+#   pip3 install -r requirements.txt
+rumps          # the menu bar app framework
+pynput         # global hotkey (hold-to-talk) + simulating Cmd+V
+sounddevice    # recording from the microphone
+numpy          # holding the audio samples in memory
+requests       # calling the Gemini API
