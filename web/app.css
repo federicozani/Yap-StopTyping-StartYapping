@@ -263,9 +263,10 @@ textarea.prompt:focus { border-color: var(--brand-purple); box-shadow: 0 0 0 3px
 .dot.on { width: 26px; border-radius: 4px; background: var(--gradient-primary); }
 
 /* ====================== QUICK PANEL =================================== */
-.panel-body { background: transparent; width: 344px; overflow: hidden; }
-.panel { width: 344px; background: #fff; border-radius: var(--r-panel);
-  border: 1px solid var(--hairline-08); box-shadow: var(--sh-panel); overflow: hidden; }
+.panel-body { background: #fff; width: 344px; overflow: hidden; }
+/* The window layer supplies the rounded corners + drop shadow (see webui.py),
+   so the panel itself just fills the surface. */
+.panel { width: 344px; background: #fff; overflow: hidden; }
 .p-header { display: flex; align-items: center; gap: 10px; padding: 15px 17px;
   background: var(--gradient-primary); color: #fff; }
 .p-header img { width: 26px; height: 26px; }

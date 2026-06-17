@@ -353,6 +353,8 @@ class YapApp(rumps.App):
         self._first_run = not existed
         self._settings_ctrl = None
         self._onboarding_ctrl = None
+        self._panel = None
+        self._panel_autoshown = False
         self._config_mtime = CONFIG_PATH.stat().st_mtime
         self.recorder = Recorder()
         self.recording = False
@@ -432,9 +434,25 @@ class YapApp(rumps.App):
             self._apply_state("idle")
 
     def _push_panel_state(self, name):
-        """Hook for the quick panel to reflect lifecycle state. Overridden /
-        wired up when the panel exists; a harmless no-op otherwise."""
-        pass
+        """Reflect the lifecycle state in the quick panel (main thread).
+
+        Auto-shows the panel while recording/working so you can see the live
+        status, then auto-hides it shortly after a result is delivered. Manual
+        opens (via the menu) stay open until toggled again."""
+        try:
+            if name == "recording":
+                self._ensure_panel()
+                if self._panel is not None and not self._panel.is_visible():
+                    self._panel_autoshown = True
+                    self._show_panel()
+            if self._panel is None or not self._panel.is_visible():
+                return
+            self._panel.push_js("yapPanel", self._panel_state(name))
+            if name == "idle" and self._panel_autoshown:
+                self._panel_autoshown = False
+                self._panel.hide_now()
+        except Exception:
+            log_exc("quick panel update failed")
 
     # ----- menu -----------------------------------------------------------
 
@@ -452,6 +470,7 @@ class YapApp(rumps.App):
             items.append(f"   {label}  →  {m['name']}")
         items += [
             None,
+            rumps.MenuItem("Quick panel", callback=self.toggle_panel),
             rumps.MenuItem("Settings…", callback=self.edit_settings),
             rumps.MenuItem("Set Gemini API key…", callback=self.set_api_key),
             rumps.MenuItem("Open config file…", callback=self.open_config_file),
@@ -565,6 +584,71 @@ class YapApp(rumps.App):
             ctrl.close_window()
         elif action == "openSettings":
             self.edit_settings(None)
+
+    # ----- quick panel ----------------------------------------------------
+
+    def _ensure_panel(self):
+        if self._panel is not None:
+            return
+        try:
+            import webui
+            self._panel = webui.open_panel(
+                resource_path("web", "panel.html"), resource_path("web"),
+                size=(344, 500), on_message=self._on_panel_message)
+        except Exception:
+            log_exc("failed to create quick panel")
+            self._panel = None
+
+    def _panel_anchor(self):
+        """Screen rect (x, y, w, h) of the menu-bar status item, or None."""
+        try:
+            btn = self._nsapp.nsstatusitem.button()
+            fr = btn.window().frame()
+            return (fr.origin.x, fr.origin.y, fr.size.width, fr.size.height)
+        except Exception:
+            return None
+
+    def _panel_state(self, mode=None):
+        modes = self.config.get("modes", [])
+        return {
+            "mode": mode or self._state,
+            "modes": [{"name": m.get("name", ""), "hotkey": m.get("hotkey", "")} for m in modes],
+            "lastYap": self.last_yap or "",
+        }
+
+    def _show_panel(self):
+        if self._panel is None:
+            return
+        # Size to fit the content, then anchor under the status item.
+        rows = len(self.config.get("modes", []))
+        height = 232 + rows * 58 + (132 if self.last_yap else 0)
+        self._panel.resize_to(344, height)
+        self._panel.push_js("yapPanel", self._panel_state())
+        self._panel.show_at(self._panel_anchor())
+
+    def toggle_panel(self, _):
+        self._ensure_panel()
+        if self._panel is None:
+            return
+        if self._panel.is_visible():
+            self._panel_autoshown = False
+            self._panel.hide_now()
+        else:
+            self._panel_autoshown = False  # user-opened: keep open until toggled
+            self._show_panel()
+
+    def _on_panel_message(self, action, payload, ctrl):
+        if action == "ready":
+            ctrl.push_js("yapPanel", self._panel_state())
+        elif action == "openSettings":
+            self.edit_settings(None)
+        elif action == "copyLast":
+            if self.last_yap:
+                try:
+                    subprocess.run("pbcopy", input=self.last_yap.encode("utf-8"), check=True)
+                    log("copied last yap to clipboard from quick panel")
+                except Exception:
+                    log_exc("copyLast failed")
 
     def open_config_file(self, _):
         # Opens config.json in the default text editor (a reliable fallback).

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="app.css">
+<title>Yap</title>
+</head>
+<body class="panel-body">
+  <div class="panel">
+    <div class="p-header">
+      <img src="../assets/app-logo.png" alt="">
+      <span class="word">Yap</span>
+      <button class="gear" data-settings title="Settings">⚙</button>
+    </div>
+
+    <div id="live" data-mode="idle">
+      <div id="wave">
+        <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+        <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+      </div>
+      <div id="status-text">Ready to yap</div>
+      <div id="status-hint">Hold ⌥ and tap an arrow</div>
+    </div>
+
+    <div id="rows"></div>
+
+    <div id="last-yap" style="display:none">
+      <div class="last-head">
+        <span class="last-eyebrow">Last yap</span>
+        <span class="last-copy" data-copy>Copy</span>
+      </div>
+      <div id="last-text"></div>
+    </div>
+
+    <div class="p-footer">⌥ + arrow to yap from anywhere</div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

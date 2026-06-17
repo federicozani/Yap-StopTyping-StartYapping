@@ -18,10 +18,12 @@ import os
 
 import objc
 from AppKit import (
-    NSApp, NSBackingStoreBuffered, NSColor, NSWindow,
+    NSApp, NSBackingStoreBuffered, NSColor, NSWindow, NSPanel, NSScreen,
     NSWindowStyleMaskTitled, NSWindowStyleMaskClosable,
     NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable,
     NSWindowStyleMaskFullSizeContentView, NSWindowTitleHidden,
+    NSWindowStyleMaskBorderless, NSWindowStyleMaskNonactivatingPanel,
+    NSPopUpMenuWindowLevel, NSWindowCollectionBehaviorCanJoinAllSpaces,
 )
 from Foundation import NSObject, NSURL, NSMakeRect
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserContentController
@@ -140,4 +142,101 @@ def open_window(html_path, web_root, title, size=(720, 600),
 
     _LIVE.add(ctrl)
     ctrl.show_window()
+    return ctrl
+
+
+class YapPanel(NSObject):
+    """A borderless, NON-ACTIVATING panel hosting a WKWebView — the quick panel.
+
+    Non-activating is the key: the panel never becomes the key window, so the
+    app you're dictating into keeps focus and the simulated Cmd+V paste still
+    lands there. That makes it safe to show the live "Listening…" surface during
+    a recording without breaking the core flow."""
+
+    def userContentController_didReceiveScriptMessage_(self, ucc, message):
+        try:
+            body = message.body()
+            try:
+                data = json.loads(body) if isinstance(body, str) else _to_py(body)
+            except Exception:
+                data = _to_py(body)
+            if self._on_message is not None:
+                self._on_message((data or {}).get("action"), (data or {}).get("payload"), self)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def push_js(self, fn_name, obj):
+        try:
+            self.webview.evaluateJavaScript_completionHandler_(
+                "window.%s && window.%s(%s);" % (fn_name, fn_name, json.dumps(obj)), None)
+        except Exception:
+            pass
+
+    def is_visible(self):
+        return bool(self.window.isVisible())
+
+    def resize_to(self, w, h):
+        self.window.setContentSize_((w, h))
+
+    def show_at(self, anchor):
+        """Show anchored under `anchor` = (x, y, w, h) screen rect of the status
+        item button. Falls back to the top-right corner under the menu bar."""
+        w = self.window.frame().size.width
+        h = self.window.frame().size.height
+        screen = NSScreen.mainScreen().frame()
+        if anchor:
+            ax, ay, aw, ah = anchor
+            x = ax + aw - w
+            y = ay - h - 4
+        else:
+            x = screen.origin.x + screen.size.width - w - 12
+            y = screen.origin.y + screen.size.height - h - 36
+        # keep on-screen
+        x = max(screen.origin.x + 6, min(x, screen.origin.x + screen.size.width - w - 6))
+        self.window.setFrameOrigin_((x, y))
+        self.window.orderFrontRegardless()
+
+    def hide_now(self):
+        self.window.orderOut_(None)
+
+
+def open_panel(html_path, web_root, size=(344, 500), on_message=None):
+    """Create the quick panel (hidden until show_at). Main thread only."""
+    ctrl = YapPanel.alloc().init()
+    ctrl._on_message = on_message
+
+    config = WKWebViewConfiguration.alloc().init()
+    ucc = WKUserContentController.alloc().init()
+    ucc.addScriptMessageHandler_name_(ctrl, "yap")
+    config.setUserContentController_(ucc)
+
+    w, h = size
+    frame = NSMakeRect(0, 0, w, h)
+    webview = WKWebView.alloc().initWithFrame_configuration_(frame, config)
+    webview.setWantsLayer_(True)
+    webview.layer().setCornerRadius_(18.0)
+    webview.layer().setMasksToBounds_(True)
+    ctrl.webview = webview
+
+    style = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
+    panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+        frame, style, NSBackingStoreBuffered, False)
+    panel.setLevel_(NSPopUpMenuWindowLevel)
+    panel.setOpaque_(False)
+    panel.setBackgroundColor_(NSColor.clearColor())
+    panel.setHasShadow_(True)
+    panel.setFloatingPanel_(True)
+    panel.setBecomesKeyOnlyIfNeeded_(True)
+    panel.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces)
+    panel.setContentView_(webview)
+    panel.setReleasedWhenClosed_(False)
+    ctrl.window = panel
+
+    url = NSURL.fileURLWithPath_(html_path)
+    read_root = os.path.dirname(os.path.normpath(web_root)) or web_root
+    webview.loadFileURL_allowingReadAccessToURL_(
+        url, NSURL.fileURLWithPath_isDirectory_(read_root, True))
+
+    _LIVE.add(ctrl)
     return ctrl

@@ -202,6 +202,12 @@ function initOnboarding() {
 /* =========================== QUICK PANEL ============================ */
 
 function initPanel() {
+  document.querySelectorAll("[data-settings]").forEach(function (b) {
+    b.addEventListener("click", function () { send("openSettings"); });
+  });
+  document.querySelectorAll("[data-copy]").forEach(function (b) {
+    b.addEventListener("click", function () { send("copyLast"); });
+  });
   send("ready");
 }
 window.yapPanel = function (state) {
