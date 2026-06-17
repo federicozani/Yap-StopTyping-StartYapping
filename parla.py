@@ -37,8 +37,27 @@ from pynput import keyboard
 
 
 def log(*a):
-    # Prints to the Terminal so we can see what the app is doing.
-    print("[parla]", *a, file=sys.stderr, flush=True)
+    # Prints to the Terminal so we can see what the app is doing, AND appends to
+    # a persistent log file (~/.parla/parla.log) so we can debug the bundled app,
+    # whose stderr is invisible when it's double-clicked.
+    msg = "[parla] " + " ".join(str(x) for x in a)
+    print(msg, file=sys.stderr, flush=True)
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        # encoding="utf-8" is essential: the bundled app's default text encoding
+        # is ASCII, and log lines contain ⌥/🔴/⏳ etc., which would otherwise
+        # raise UnicodeEncodeError and silently drop the line.
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+    except Exception:
+        pass  # logging must never break the app
+
+
+def log_exc(prefix="ERROR"):
+    """Log a full traceback (used in background threads where a bare raise would
+    otherwise vanish silently)."""
+    import traceback
+    log(prefix + "\n" + traceback.format_exc().rstrip())
 
 
 def notify(title, subtitle, message=""):
@@ -57,6 +76,7 @@ def notify(title, subtitle, message=""):
 
 CONFIG_DIR = Path.home() / ".parla"
 CONFIG_PATH = CONFIG_DIR / "config.json"
+LOG_PATH = CONFIG_DIR / "parla.log"
 
 SAMPLE_RATE = 16000  # 16 kHz mono is plenty for speech and keeps files small.
 CHANNELS = 1
@@ -305,7 +325,25 @@ class ParlaApp(rumps.App):
             self._finish_recording()
             return
         m, s = divmod(int(remaining), 60)
-        self.title = f"{ParlaApp.REC_ICON} {m}:{s:02d}"
+        self.title = f"{ParlaApp.REC_ICON} {m}:{s:02d}"  # _tick runs on main thread
+
+    def _set_title(self, value):
+        """Update the menu-bar icon/title on the MAIN thread.
+
+        rumps/AppKit only reliably updates UI from the main thread. Several
+        title changes happen on background threads (the global key listener and
+        the _process worker), and in the packaged .app those background updates
+        were silently dropped — which is why the ⏳ busy icon never appeared.
+        callAfter marshals the change onto the main run loop.
+        """
+        try:
+            from PyObjCTools import AppHelper
+            AppHelper.callAfter(self._apply_title, value)
+        except Exception:
+            self.title = value  # fallback (e.g. no run loop): set directly
+
+    def _apply_title(self, value):
+        self.title = value
 
     # ----- menu -----------------------------------------------------------
 
@@ -455,13 +493,13 @@ class ParlaApp(rumps.App):
             self.recorder.start()
             self._record_start = time.time()
             m, s = divmod(ParlaApp.MAX_RECORD_SECONDS, 60)
-            self.title = f"{ParlaApp.REC_ICON} {m}:{s:02d}"
+            self._set_title(f"{ParlaApp.REC_ICON} {m}:{s:02d}")
             log("RECORDING started for mode:", mode["name"],
                 "— keep holding Right Option, release it to finish")
         except Exception as e:
             self.recording = False
             self.active_mode = None
-            self.title = ParlaApp.IDLE_ICON
+            self._set_title(ParlaApp.IDLE_ICON)
             log("ERROR starting microphone:", e)
 
     def _on_release(self, key):
@@ -483,7 +521,7 @@ class ParlaApp(rumps.App):
         log("RECORDING stopped, audio bytes:", len(wav_bytes))
         mode = self.active_mode
         self.active_mode = None
-        self.title = ParlaApp.BUSY_ICON
+        self._set_title(ParlaApp.BUSY_ICON)
         # Do the network call off the main thread so the UI stays responsive.
         threading.Thread(target=self._process, args=(wav_bytes, mode), daemon=True).start()
 
@@ -492,14 +530,14 @@ class ParlaApp(rumps.App):
             # Ignore accidental taps (less than ~0.3s of audio).
             if len(wav_bytes) < SAMPLE_RATE * 2 * 0.3:
                 log("audio too short, skipping (did the mic record anything?)")
-                self.title = ParlaApp.IDLE_ICON
+                self._set_title(ParlaApp.IDLE_ICON)
                 return
             api_key = self.config.get("api_key", "")
             if not api_key or api_key == DEFAULT_CONFIG["api_key"]:
                 log("no API key set")
                 notify("Parla", "No API key set",
                        "Open Edit settings and paste your Gemini API key.")
-                self.title = ParlaApp.IDLE_ICON
+                self._set_title(ParlaApp.IDLE_ICON)
                 return
             log("sending to Gemini…")
             text = transcribe_with_gemini(
@@ -517,12 +555,10 @@ class ParlaApp(rumps.App):
             log("Gemini HTTP error:", e, body)
             notify("Parla", "Gemini busy, try again", "The model was overloaded.")
         except Exception as e:
-            import traceback
-            log("ERROR:", e)
-            traceback.print_exc()
+            log_exc("ERROR in _process")
             notify("Parla", "Something went wrong", str(e))
         finally:
-            self.title = ParlaApp.IDLE_ICON
+            self._set_title(ParlaApp.IDLE_ICON)
 
 
 if __name__ == "__main__":
@@ -541,6 +577,22 @@ if __name__ == "__main__":
                     os.environ.setdefault(var, str(p))
         import settings_gui
         settings_gui.main()
+        sys.exit(0)
+    if os.environ.get("PARLA_SELFTEST") == "1":
+        log("SELFTEST start. frozen=%r" % getattr(sys, "frozen", False))
+        # the exact Gemini request mechanism (dummy key -> expect HTTP 400/403,
+        # which proves requests + TLS work; an SSL/conn error would prove they don't)
+        try:
+            transcribe_with_gemini(b"RIFF....", "hi", "dummy-key", "gemini-2.5-flash", retries=1)
+            log("SELFTEST gemini: returned without raising")
+        except Exception as e:
+            log("SELFTEST gemini raised:", repr(e))
+        # paste mechanism (pbcopy + pynput Cmd+V)
+        try:
+            paste_text("parla-selftest"); log("SELFTEST paste OK")
+        except Exception as e:
+            log_exc("SELFTEST paste FAIL")
+        log("SELFTEST done")
         sys.exit(0)
     log("starting. Hold Right Option (⌥) and speak. Watch these lines while you test.")
     ParlaApp().run()
