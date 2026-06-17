@@ -1,6 +1,8 @@
-# Parla — Setup Guide
+# Yap — Setup Guide
 
-A personal voice-to-text app that lives in your Mac menu bar. Hold a key, talk, release, and your words appear in whatever app you're using. Different keys give different results (clean transcription, summary with action items, raw text, or your own custom behavior).
+A personal voice-to-text app that lives in your Mac menu bar. **Hold Right Option (⌥), tap an arrow, talk, release** — and your words appear in whatever app you're using. Different arrows give different results (clean transcription, summary, raw text, or your own custom behavior).
+
+> Yap used to be called **Parla**. If you ran Parla before, your settings (including your saved API key) are migrated automatically the first time you run Yap — see "Your settings move over" below.
 
 This guide assumes you've never done this before. Follow it top to bottom.
 
@@ -10,171 +12,183 @@ This guide assumes you've never done this before. Follow it top to bottom.
 
 1. A Mac.
 2. Python 3 (almost certainly already on your Mac; we check below).
-3. A free Gemini API key (you said you have one).
+3. A free Gemini API key (get one at https://aistudio.google.com).
 
 ---
 
 ## Step 1: Open Terminal
 
-Terminal is the app where you type commands. Press `Cmd + Space`, type `Terminal`, press Enter. A window with a blinking cursor opens. You'll paste commands here and press Enter after each one.
+Press `Cmd + Space`, type `Terminal`, press Enter. You'll paste commands here and press Enter after each one.
 
 ---
 
 ## Step 2: Check you have Python 3
 
-Paste this and press Enter:
-
 ```
 python3 --version
 ```
 
-If you see something like `Python 3.11.x`, you're good. If it says "command not found", install Python from https://www.python.org/downloads/ (download the macOS installer, run it, then reopen Terminal).
+If you see `Python 3.9` or newer, you're good. If it says "command not found", install Python from https://www.python.org/downloads/, then reopen Terminal.
 
 ---
 
 ## Step 3: Install the app's building blocks
 
-These are the small libraries Parla uses. Paste this one line and press Enter:
+Yap uses a few small libraries. Paste this one line:
 
 ```
-pip3 install rumps pynput sounddevice numpy requests
+pip3 install rumps pynput sounddevice numpy requests pyobjc-framework-WebKit
 ```
 
-It'll print a lot of text for a minute. As long as the last lines don't say "ERROR", it worked.
+It prints a lot of text for a minute. As long as the last lines don't say "ERROR", it worked.
 
-(Tip: if `pip3` says "command not found", try `python3 -m pip install rumps pynput sounddevice numpy requests` instead.)
+(If `pip3` says "command not found", use `python3 -m pip install …` instead.)
 
 ---
 
-## Step 4: Start the app once (to create the settings file)
+## Step 4: Start the app once
 
-In Terminal, paste this and press Enter (keep the quotes):
+From the project folder, run:
 
 ```
-python3 "/Users/federicozaninelli/Claude/Projects/Claude Code Helper/Parla/parla.py"
+python3 "/Users/federicozaninelli/Downloads/Claude Code Projects/Parla/yap.py"
 ```
 
-The first time you run it, macOS will pop up permission requests, and a 🎙️ icon should appear in your menu bar (top right of the screen). The app needs three permissions. Grant all three:
+A little fish icon appears in your menu bar (top-right). On the very first run a **Welcome** window also opens — that's the onboarding. macOS will ask for permissions; grant all three:
 
 ### The three permissions (important)
 
-Go to `System Settings` > `Privacy & Security`, and in each section below, make sure **Terminal** is listed and toggled ON. (Later, if you bundle Parla into its own app, you'll toggle "Parla" instead of "Terminal".)
+`System Settings` → `Privacy & Security`, and in each section make sure **Terminal** is ON (later, when you build the app, you'll toggle **Yap** instead):
 
 1. **Microphone** — so it can hear you.
-2. **Accessibility** — so it can type the result (paste) into other apps.
-3. **Input Monitoring** — so the hold-to-talk key works even when another app is in front.
+2. **Accessibility** — so it can paste the result into other apps.
+3. **Input Monitoring** — so the hold-to-talk key works while another app is in front.
 
-After granting permissions, fully quit the app (click the 🎙️ icon > Quit Parla) and run the command from Step 4 again.
-
-> Why Terminal and not Parla? Right now you're launching the app *through* Terminal, so macOS attributes the permissions to Terminal. Step 8 shows how to turn Parla into its own clickable app with its own permissions.
+After granting them, quit (fish icon → Quit Yap) and run Step 4 again.
 
 ---
 
 ## Step 5: Add your Gemini API key
 
-Click the 🎙️ menu bar icon, then "Set Gemini API key…". A small box appears. Paste your key, click Save. That's it.
+Click the fish icon → **Settings…**. The Settings window opens. Go to **Voice & model**, paste your key into **Gemini API key** (use the 👁 to reveal it), pick a model, click **Save**.
 
-> Your key is stored only on your own Mac, in `~/.parla/config.json`. It never leaves your computer except in the API calls to Google.
+(Quick alternative: fish icon → "Set Gemini API key…" for a one-field box.)
+
+> Your key is stored only on your Mac, in `~/.yap/config.json`. It never leaves your computer except in the API calls to Google.
 
 ---
 
 ## Step 6: Try it
 
-1. Click into any text field (Notes, a browser search box, Messages, anywhere you can type).
-2. **Hold Right Option (⌥)** and say a sentence or two. The icon turns 🔴 while recording.
-3. **Release the key.** The icon shows ⏳ while Gemini works, then your cleaned-up text is pasted right where your cursor is.
+1. Click into any text field (Notes, a search box, Messages…).
+2. **Hold Right Option (⌥)** and **tap an arrow** to pick a mode — the menu-bar fish turns into a pink "recording" chip with a live countdown.
+3. **Keep holding ⌥ and talk.** **Release ⌥** to finish. The fish shows a purple "working" chip while Gemini works, a brief green check when done, then your text is pasted where your cursor is.
 
-The four keys and what they do:
+The four default arrows:
 
-| Hold this key       | Mode    | What you get                                            |
-|---------------------|---------|---------------------------------------------------------|
-| Right Option ⌥      | Clean   | Transcription with filler removed, tidy punctuation     |
-| Right Command ⌘     | Summary | A summary with bullet points and an action-items list   |
-| Right Shift ⇧       | Raw     | Word-for-word transcription, no edits                   |
-| Right Control ⌃     | Custom  | Your own behavior (default: translate to English)       |
+| Hold ⌥ and tap | Mode    | What you get                                          |
+|----------------|---------|-------------------------------------------------------|
+| ← Left         | Clean   | Transcription with filler removed, tidy punctuation   |
+| ↑ Up           | Summary | A summary with bullet points and action items         |
+| → Right        | Raw     | Word-for-word transcription, no edits                 |
+| ↓ Down         | Custom  | Your own behavior (default: translate to English)     |
+
+Recording auto-stops at **7 minutes** so it never exceeds Gemini's audio limit.
 
 ---
 
-## Step 7: Make it yours (the settings window)
+## Step 7: Make it yours (Settings)
 
-This is the whole point of Parla: you control how it behaves with plain-English instructions.
+Click the fish icon → **Settings…**:
 
-Click the icon > "Edit prompts & hotkeys…". A settings window opens where you can, with no code:
+- **Buttons & keys** — rename a button, pick its arrow, rewrite its prompt, **Add a button**, **Remove**, **Save**.
+- **Voice & model** — your API key and model.
 
-- Paste/change your API key and the model.
-- Rename any mode.
-- Pick which hotkey triggers it (the dropdown of right-side modifier keys).
-- Rewrite the prompt for each mode.
-- Add a new mode (+ Add mode) or remove one.
-
-Click Save and Parla picks up the changes automatically; no restart needed. Example prompts to try:
+Click **Save** and Yap picks up the changes automatically; no restart needed. Example prompts to try:
 
 - "Transcribe this and rewrite it as a professional email."
 - "Transcribe this and turn it into a tweet under 280 characters."
 - "Transcribe this in Italian and fix any grammar."
 
-(Prefer editing raw text? "Open config file…" opens the same settings as a JSON file.)
+There's also a **Quick panel** (fish icon → Quick panel) — a small popover showing your buttons, the live "Listening…" status while you record, and your last result with a Copy button. It also pops up on its own while you're recording.
+
+(Prefer raw text? "Open config file…" opens the same settings as JSON.)
 
 ---
 
 ## Step 8 (optional): Turn it into a clickable app you can share
 
-Right now you start Parla by typing a command. To make it a normal `.app` you can double-click (and send to friends), use `py2app`. The most reliable way is to build inside a **clean, throwaway environment** that contains only Parla's libraries — this avoids accidentally dragging unrelated packages into the app. Paste these, one block at a time, from the project folder:
+To make a normal `.app` you can double-click (and send to friends), use `py2app`. Build inside a **clean, throwaway environment** that contains only Yap's libraries:
 
 ```
 cd "/Users/federicozaninelli/Downloads/Claude Code Projects/Parla"
 python3 -m venv build-env
 source build-env/bin/activate
-pip install rumps pynput sounddevice numpy requests charset_normalizer py2app
+pip install rumps pynput sounddevice numpy requests pyobjc-framework-WebKit py2app Pillow
+pip install --no-binary charset_normalizer charset_normalizer
 python setup_app.py py2app
 deactivate
 ```
 
-This creates `dist/Parla.app`, with the Parla microphone icon. Double-click it to run. The first launch will ask for the same three permissions (this time grant them to "Parla"). Inside the app, "Edit prompts & hotkeys…" opens the full visual settings window, just like from source.
+This creates `dist/Yap.app` with the Yap fish icon. Double-click it to run.
 
-> You only make the `build-env` folder once; to rebuild later, run `source build-env/bin/activate`, then `python setup_app.py py2app`, then `deactivate`. You can delete the `build`, `dist`, and `build-env` folders any time — they're regenerated.
+Notes:
+- `pyobjc-framework-WebKit` powers the Settings / onboarding / quick-panel windows (a native web view — WebKit ships with macOS).
+- `Pillow` is only used by `make_icon.py` to generate the icons; the running app never needs it.
+- The `--no-binary charset_normalizer` line installs the pure-Python build of that library so it bundles cleanly (the default has a compiled helper py2app can't find).
+- **First launch asks for the three permissions again** — Yap now has its own identity (`com.yap.app`), so macOS treats it as a new app and re-asks for Microphone / Accessibility / Input Monitoring. Grant them to **Yap**.
 
-### Changing the app icon
+> You only make `build-env` once. To rebuild later: `source build-env/bin/activate`, `python setup_app.py py2app`, `deactivate`. You can delete `build`, `dist`, and `build-env` any time — they're regenerated.
 
-Parla ships with a simple placeholder icon (`parla.icns`). To use your own:
+### Changing the artwork
 
-- **Easiest:** put a square PNG (ideally 1024×1024) named `parla_icon.png` in the project folder, then run `python3 make_icon.py`. It converts your PNG into a proper `parla.icns`.
-- **Or:** replace `parla.icns` directly with your own `.icns` file.
+All of Yap's artwork is generated from the design tokens by `make_icon.py`:
 
-Then rebuild (Step 8). Running `python3 make_icon.py` with no `parla_icon.png` present just regenerates the default placeholder.
+```
+python3 make_icon.py
+```
 
-### What to tell a friend you share `Parla.app` with
+This (re)creates the four menu-bar state icons in `assets/`, the in-app logo, and the app icon `yap.icns`. Edit the colors/geometry at the top of `make_icon.py` to tweak them, then rebuild (Step 8).
 
-1. Move `Parla.app` to Applications. The first time, right-click it > Open > Open (this gets past the "unidentified developer" warning, which appears because the app isn't signed by Apple).
-2. Grant the three permissions when macOS asks (Microphone, Accessibility, Input Monitoring), all under System Settings > Privacy & Security.
-3. Get a free Gemini API key at https://aistudio.google.com (sign in, "Get API key", copy it).
-4. Click the 🎙️ icon > "Set Gemini API key…", paste, Save.
-5. Hold Right Option and talk.
+### What to tell a friend you share `Yap.app` with
 
-> The "unidentified developer" warning is normal for an unsigned app; right-click > Open clears it the first time, and the app is fully self-contained (it carries its own copy of Python, so your friend doesn't need to install anything). Proper Apple signing for friction-free sharing is a separate, more advanced step and isn't set up here.
+1. Move `Yap.app` to Applications. First time: right-click → Open → Open (gets past the "unidentified developer" warning — the app is unsigned).
+2. Grant the three permissions when asked (all under System Settings → Privacy & Security).
+3. Get a free Gemini API key at https://aistudio.google.com.
+4. Click the fish icon → Settings… → Voice & model, paste the key, Save.
+5. Hold Right Option, tap an arrow, talk.
+
+> The app is fully self-contained (it carries its own copy of Python), so your friend doesn't need to install anything. Proper Apple signing for friction-free sharing is a separate, more advanced step not set up here.
+
+---
+
+## Your settings move over (from Parla)
+
+The first time Yap runs, if it finds an old `~/.parla/config.json` but no `~/.yap/config.json` yet, it **copies your old settings over** — API key, model, and your modes — and copies the old log too. Your old `~/.parla` folder is left untouched. So upgrading from Parla loses nothing.
 
 ---
 
 ## Troubleshooting
 
-- **Nothing pastes:** Accessibility permission isn't granted (Step 4). Re-check it, then quit and relaunch.
-- **Key doesn't trigger recording:** Input Monitoring permission. Same fix.
-- **After rebuilding the app, the hotkey stops working:** a freshly built `Parla.app` is a new unsigned binary, so macOS may no longer trust the Input Monitoring / Accessibility permissions you granted to the previous build. Fix: open System Settings > Privacy & Security > **Input Monitoring** (and **Accessibility**), **remove** the old "Parla" entry with the "–" button, then quit and relaunch Parla and grant it again. The log at `~/.parla/parla.log` confirms the cause — if pressing Right Option logs no "key pressed" lines, it's this.
-- **Diagnose anything from the log:** every action is recorded at `~/.parla/parla.log`. To health-check a built app without speaking, run `"…/Parla.app/Contents/MacOS/Parla"` with the environment variable `PARLA_SELFTEST=1` set; it logs whether the Gemini request and paste both work.
-- **"No API key set" notification:** redo Step 5, and remember to "Reload settings".
+- **Nothing pastes:** Accessibility permission isn't granted. Re-check it, then quit and relaunch.
+- **Key doesn't trigger recording:** Input Monitoring permission. Same fix. The log shows `This process is not trusted!` when this is the cause.
+- **After rebuilding the app, the hotkey stops working:** a freshly built `Yap.app` is a new unsigned binary, so macOS may distrust the permissions you granted the previous build. Fix: System Settings → Privacy & Security → **Input Monitoring** (and **Accessibility**), **remove** the old "Yap" entry with "–", then quit and relaunch Yap and grant it again. The log at `~/.yap/yap.log` confirms it — if pressing Right Option logs no "key pressed" lines, it's this.
+- **Health-check a built app without speaking:** run the bundled binary with `YAP_SELFTEST=1`:
+  `YAP_SELFTEST=1 "…/Yap.app/Contents/MacOS/Yap"` — it logs whether the Gemini request and the paste both work (a `400` from Gemini is expected and fine; it proves the network/TLS path works).
+- **"No API key set" notification:** redo Step 5.
 - **It pastes but the text is wrong/empty:** check your internet connection and that the API key is valid.
-- **To stop the app:** click the menu bar icon > Quit Parla.
-- **Settings window won't open** (you see a `tkinter` error in Terminal): your Python is missing the GUI toolkit. If you installed Python with Homebrew, run `brew install python-tk`; or use the installer from python.org, which includes it. The "Set Gemini API key…" and "Open config file…" items work regardless.
+- **Settings window won't open:** the log at `~/.yap/yap.log` records the reason; "Set Gemini API key…" and "Open config file…" always work as a fallback.
+- **To stop the app:** fish icon → Quit Yap.
 
 ---
 
 ## How it works under the hood (for your learning)
 
-Parla is about 250 lines of Python in `parla.py`. The four parts:
+Yap is one Python file, `yap.py`. The four parts:
 
-1. **Capture** (`_on_press` / `_on_release`): `pynput` watches for the hold-to-talk key globally; while held, `sounddevice` records the mic into memory.
-2. **Process** (`transcribe_with_gemini`): the recording is sent as audio to Gemini's `generateContent` endpoint together with the mode's prompt. Gemini transcribes and formats in a single call.
+1. **Capture** (`_on_press` / `_on_release`): `pynput` watches for Right Option held + an arrow tapped; while held, `sounddevice` records the mic into memory.
+2. **Process** (`transcribe_with_gemini`): the recording is sent as audio to Gemini's `generateContent` endpoint with the mode's prompt; Gemini transcribes and formats in one call (with automatic retries on "busy" errors).
 3. **Output** (`paste_text`): the result goes to the clipboard, then a simulated `Cmd + V` pastes it where your cursor is.
-4. **Settings**: your API key and modes (name, prompt, hotkey) live in `~/.parla/config.json`. The visual window (`settings_gui.py`, built with Tkinter) just reads and writes that file; the menu bar app notices the change and reloads on its own.
+4. **Settings & UI**: your API key and modes live in `~/.yap/config.json`. The menu-bar layer is `rumps`; the Settings, onboarding, and quick-panel windows are an embedded **WebKit web view** (`webui.py` + the HTML/CSS/JS in `web/`, styled from `design/design-tokens.json`). The menu-bar fish has four lifecycle states (idle / recording / working / done) drawn by `make_icon.py`.
 
-Open `parla.py` and `settings_gui.py` and read the comments. They're meant to be understood and tinkered with (and exactly the kind of small changes your `fix-driver` command can iterate on later).
+Read the comments in `yap.py` and `webui.py` — they're meant to be tinkered with.
