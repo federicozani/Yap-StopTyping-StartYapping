@@ -25,9 +25,11 @@ def _find_rpath_dylibs():
     .app self-contained. On Pythons that don't need this (python.org/Homebrew)
     none are found and the list stays empty, so this is a safe no-op there.
     """
-    # libffi -> needed by ctypes at boot; libtcl/libtk -> needed by tkinter
-    # (the visual settings window).
-    candidates = ["libffi.8.dylib", "libtcl8.6.dylib", "libtk8.6.dylib"]
+    # libffi -> needed by ctypes at boot; libssl/libcrypto -> needed by the ssl
+    # module (without them, every HTTPS call to Gemini fails with "the SSL module
+    # is not available"); libtcl/libtk -> needed by tkinter (settings window).
+    candidates = ["libffi.8.dylib", "libssl.3.dylib", "libcrypto.3.dylib",
+                  "libtcl8.6.dylib", "libtk8.6.dylib"]
     lib_dirs = [os.path.join(p, "lib")
                 for p in {sys.prefix, getattr(sys, "base_prefix", sys.prefix)}]
     found = []
