@@ -683,6 +683,10 @@ class YapApp(rumps.App):
             ctrl.push_js("yapPanel", self._panel_state())
         elif action == "openSettings":
             self.edit_settings(None)
+            # Close the pop-up so the user is left with just the Settings window.
+            self._panel_autoshown = False
+            if self._panel is not None:
+                self._panel.hide_now()
         elif action == "quit":
             rumps.quit_application()
         elif action == "copyLast":
