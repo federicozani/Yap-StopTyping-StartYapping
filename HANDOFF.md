@@ -20,6 +20,9 @@ This file is the context for continuing work (e.g. in Claude Code).
   - **Settings** — Buttons & keys (per-mode name/hotkey/prompt, Add, Remove, Save), Voice & model (API key + show/hide, model), About. Saves to the same `~/.yap/config.json` and triggers the normal reload.
   - **Onboarding** — 3-step welcome, shown on first run (and via "Show welcome screen…").
   - **Quick panel** — a borderless **non-activating** popover under the status item (so it never steals key focus → paste keeps working). Shows the buttons, a live "Listening…/Working" status, and the last result with Copy. Auto-shows during recording.
+- **Menu-bar icon click behavior**: a normal **left-click opens the quick panel** (the same recording pop-up), not a dropdown. **Right-click / Control-click shows the full menu** (Settings…, Set API key, Open config, Restore defaults, Reload, Show welcome, **Quit Yap**) — a safety net so nothing is unreachable. Implemented by capturing the rumps `NSMenu`, detaching it (`setMenu_(None)`), and routing the status-item button action (`webui.install_status_click`).
+- **Quick panel actions**: top-right **gear opens Settings and auto-closes the panel** (so you're left with just Settings); footer has a **Quit Yap** link. So Settings and Quit are reachable straight from the pop-up.
+- **About** (in Settings) credits *"Created by your friendly Federico Zaninelli."* — no "powered by Gemini" line.
 - Menu-bar only (no Dock icon, `LSUIElement`). App icon = squircle brand gradient + fish (`yap.icns`).
 
 ## Files
@@ -53,15 +56,24 @@ Needs three macOS permissions (Microphone, Accessibility, Input Monitoring). See
 - PyObjC gotcha: bare single-word method names on the NSObject subclasses (e.g. `push`, `resize`, `hide`, `show`, `close`) collide with existing ObjC selectors and raise `BadPrototypeError`. Keep helper names suffixed (`push_js`, `resize_to`, `hide_now`, `show_window`, `close_window`).
 - charset_normalizer must be installed **pure-Python** (`pip install --no-binary charset_normalizer charset_normalizer`) or its mypyc `.so` fails to import in the bundle.
 
+## Known issues
+
+- **Rebuilding resets macOS permissions (biggest pain).** `Yap.app` is **unsigned**, so each time you rebuild it, macOS sees a "new" app and **forgets** the Microphone / Accessibility / Input Monitoring grants. After every rebuild you must go to System Settings → Privacy & Security, **remove the old "Yap" entry** in Input Monitoring (and Accessibility), then relaunch and grant again, or the hotkey/paste silently stops working. Symptom in the log: pressing Right Option produces no "key pressed" lines, and/or `This process is not trusted!`. **Code signing (see backlog) fixes this for good** — a stable signed identity keeps the permissions across rebuilds.
+- **First launch after the Parla→Yap rename** also re-asks for the three permissions once (new bundle id `com.yap.app`); expected.
+- **Menu-bar icon is static art.** The working-state bubbles and the panel waveform animate (CSS in the web view), but the menu-bar glyph itself doesn't animate per-frame (NSStatusItem limitation).
+- **Display fonts** are bundled from Google Fonts at build time; if a future build can't fetch them, the CSS falls back to system stacks (Trebuchet / SF).
+- **Right-click menu uses a deprecated-but-working API** (`popUpMenuPositioningItem…`) to show under the icon; fine for now.
+
 ## Backlog (bigger features, separate sessions)
 
-- **Menu-bar animation**: the working-state bubbles and the in-panel waveform animate via CSS in the web view, but the *menu-bar* icon itself is static art (NSStatusItem can't easily animate per-frame). Could swap frames on the tick timer if desired.
-- **Display fonts**: bundled from Google Fonts at build time. If a future build can't fetch them, the CSS falls back to the token fallback stacks (Trebuchet/ system).
-- **Decorative Settings panes** from the mockup (General toggles, Dictionary, swatch picker) were not built — they had no real setting to back them. Add them when there's a real preference to wire (e.g. launch-at-login, icon style).
-- **Multiple LLM providers**, **long audio (>7 min via Files API)** — as before.
+- **Code signing + notarization (recommended next).** Sign `Yap.app` with an Apple Developer ID and notarize it. This (a) makes macOS permissions **stick across rebuilds** (no more remove/re-add dance), and (b) lets you share the app without the "unidentified developer" right-click-to-open step. Needs a paid Apple Developer account ($99/yr).
+- **Multiple LLM providers**: let the user pick Gemini / OpenAI / Anthropic / etc. and store the matching key. Needs a small provider abstraction around `transcribe_with_gemini`.
+- **Custom keys + custom prompts beyond the 4 defaults**: more than four modes / user-defined trigger combos (today it's the four arrows).
+- **Long audio (>7 min)**: switch from inline audio to Gemini's **Files API** (upload then reference) and raise the request timeout, so recordings aren't capped at 7:00.
+- **Decorative Settings panes** from the mockup (General toggles, Dictionary, swatch picker) were not built — they had no real setting to back them. Add when there's a real preference to wire (e.g. launch-at-login, icon style).
 
 ## Notes / gotchas
 
 - Paste uses Cmd+V into the focused app; the quick panel is non-activating so it doesn't intercept it.
 - Option+Arrow also nudges the cursor (OS text-navigation) in some apps at recording start; acceptable.
-- New bundle id `com.yap.app` ⇒ macOS re-asks for the three permissions on Yap's first launch (one-time after the rename).
+- Permissions and rebuilds: see **Known issues** above — unsigned rebuilds reset the macOS permissions until the app is code-signed.
