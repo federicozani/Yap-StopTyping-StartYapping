@@ -530,6 +530,15 @@ if __name__ == "__main__":
     # editor and exit instead of starting the menu bar app. This is how the
     # settings window opens both from source and inside the bundled .app.
     if os.environ.get("PARLA_SETTINGS") == "1":
+        # Inside the bundle, tkinter needs to be told where the bundled Tcl/Tk
+        # script libraries live (they're under Resources/lib/tclX). py2app does
+        # this automatically for framework Pythons but not for conda builds.
+        if getattr(sys, "frozen", False):
+            res = Path(sys.executable).resolve().parent.parent / "Resources" / "lib"
+            for var, sub in (("TCL_LIBRARY", "tcl8.6"), ("TK_LIBRARY", "tk8.6")):
+                p = res / sub
+                if p.is_dir():
+                    os.environ.setdefault(var, str(p))
         import settings_gui
         settings_gui.main()
         sys.exit(0)

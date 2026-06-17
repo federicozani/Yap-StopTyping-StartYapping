@@ -119,15 +119,29 @@ Click Save and Parla picks up the changes automatically; no restart needed. Exam
 
 ## Step 8 (optional): Turn it into a clickable app you can share
 
-Right now you start Parla by typing a command. To make it a normal `.app` you can double-click (and send to friends), use `py2app`:
+Right now you start Parla by typing a command. To make it a normal `.app` you can double-click (and send to friends), use `py2app`. The most reliable way is to build inside a **clean, throwaway environment** that contains only Parla's libraries — this avoids accidentally dragging unrelated packages into the app. Paste these, one block at a time, from the project folder:
 
 ```
-pip3 install py2app
-cd "/Users/federicozaninelli/Claude/Projects/Claude Code Helper/Parla"
-python3 setup_app.py py2app
+cd "/Users/federicozaninelli/Downloads/Claude Code Projects/Parla"
+python3 -m venv build-env
+source build-env/bin/activate
+pip install rumps pynput sounddevice numpy requests charset_normalizer py2app
+python setup_app.py py2app
+deactivate
 ```
 
-This creates `dist/Parla.app`. Double-click it to run. The first launch will ask for the same three permissions (this time grant them to "Parla").
+This creates `dist/Parla.app`, with the Parla microphone icon. Double-click it to run. The first launch will ask for the same three permissions (this time grant them to "Parla"). Inside the app, "Edit prompts & hotkeys…" opens the full visual settings window, just like from source.
+
+> You only make the `build-env` folder once; to rebuild later, run `source build-env/bin/activate`, then `python setup_app.py py2app`, then `deactivate`. You can delete the `build`, `dist`, and `build-env` folders any time — they're regenerated.
+
+### Changing the app icon
+
+Parla ships with a simple placeholder icon (`parla.icns`). To use your own:
+
+- **Easiest:** put a square PNG (ideally 1024×1024) named `parla_icon.png` in the project folder, then run `python3 make_icon.py`. It converts your PNG into a proper `parla.icns`.
+- **Or:** replace `parla.icns` directly with your own `.icns` file.
+
+Then rebuild (Step 8). Running `python3 make_icon.py` with no `parla_icon.png` present just regenerates the default placeholder.
 
 ### What to tell a friend you share `Parla.app` with
 
@@ -137,7 +151,7 @@ This creates `dist/Parla.app`. Double-click it to run. The first launch will ask
 4. Click the 🎙️ icon > "Set Gemini API key…", paste, Save.
 5. Hold Right Option and talk.
 
-> Two honest notes about the bundled app: (a) the "unidentified developer" warning is normal for an unsigned app; right-click > Open clears it. Proper Apple signing for wider sharing is a separate, more advanced step. (b) In the bundled app the visual settings window may not open; "Set Gemini API key…" and "Open config file…" both work there, so your friend can still set their key and edit prompts. The full visual editor is most reliable when running from source (Steps 1-7).
+> The "unidentified developer" warning is normal for an unsigned app; right-click > Open clears it the first time, and the app is fully self-contained (it carries its own copy of Python, so your friend doesn't need to install anything). Proper Apple signing for friction-free sharing is a separate, more advanced step and isn't set up here.
 
 ---
 
