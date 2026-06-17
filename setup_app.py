@@ -18,7 +18,10 @@ OPTIONS = {
         "NSMicrophoneUsageDescription": "Parla records your voice to transcribe it.",
     },
     "packages": ["rumps", "pynput", "sounddevice", "numpy", "requests"],
-    "includes": ["tkinter"],
+    # settings_gui is imported by parla.py when relaunched in settings mode, so
+    # it must be a real importable module inside the bundle (not just a data file).
+    "includes": ["tkinter", "settings_gui"],
+    "iconfile": "parla.icns",
 }
 
 setup(
