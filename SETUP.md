@@ -159,6 +159,8 @@ Then rebuild (Step 8). Running `python3 make_icon.py` with no `parla_icon.png` p
 
 - **Nothing pastes:** Accessibility permission isn't granted (Step 4). Re-check it, then quit and relaunch.
 - **Key doesn't trigger recording:** Input Monitoring permission. Same fix.
+- **After rebuilding the app, the hotkey stops working:** a freshly built `Parla.app` is a new unsigned binary, so macOS may no longer trust the Input Monitoring / Accessibility permissions you granted to the previous build. Fix: open System Settings > Privacy & Security > **Input Monitoring** (and **Accessibility**), **remove** the old "Parla" entry with the "–" button, then quit and relaunch Parla and grant it again. The log at `~/.parla/parla.log` confirms the cause — if pressing Right Option logs no "key pressed" lines, it's this.
+- **Diagnose anything from the log:** every action is recorded at `~/.parla/parla.log`. To health-check a built app without speaking, run `"…/Parla.app/Contents/MacOS/Parla"` with the environment variable `PARLA_SELFTEST=1` set; it logs whether the Gemini request and paste both work.
 - **"No API key set" notification:** redo Step 5, and remember to "Reload settings".
 - **It pastes but the text is wrong/empty:** check your internet connection and that the API key is valid.
 - **To stop the app:** click the menu bar icon > Quit Parla.

@@ -305,18 +305,25 @@ class ParlaApp(rumps.App):
         self.option_down = False  # is the activator (Right Option) being held?
         self.active_mode = None
         self._record_start = None  # when the current recording began
+        self._pending_title = None  # title requested off-thread; applied in _tick
         self._lock = threading.Lock()  # guards starting/stopping a recording
         # Map each hotkey string ("left", "up", …) to its mode dict.
         self.hotkey_map = {m["hotkey"]: m for m in self.config["modes"]}
 
         self._build_menu()
         self._start_listener()
-        # Ticks once a second to update the countdown and enforce the time limit.
-        self._timer = rumps.Timer(self._tick, 1)
+        # Ticks 4x/second on the main thread: applies pending icon changes (so
+        # the ⏳ busy icon shows promptly) and updates the recording countdown.
+        self._timer = rumps.Timer(self._tick, 0.25)
         self._timer.start()
 
     def _tick(self, _):
-        """Runs every second (on the main thread) to show the countdown."""
+        """Runs ~4x/second ON THE MAIN THREAD. Applies any icon/title change
+        requested from a background thread, then shows the live countdown."""
+        pending = self._pending_title
+        if pending is not None:
+            self._pending_title = None
+            self.title = pending
         if not self.recording or self._record_start is None:
             return
         remaining = ParlaApp.MAX_RECORD_SECONDS - (time.time() - self._record_start)
@@ -325,25 +332,19 @@ class ParlaApp(rumps.App):
             self._finish_recording()
             return
         m, s = divmod(int(remaining), 60)
-        self.title = f"{ParlaApp.REC_ICON} {m}:{s:02d}"  # _tick runs on main thread
+        self.title = f"{ParlaApp.REC_ICON} {m}:{s:02d}"
 
     def _set_title(self, value):
-        """Update the menu-bar icon/title on the MAIN thread.
+        """Request a menu-bar icon/title change from ANY thread.
 
-        rumps/AppKit only reliably updates UI from the main thread. Several
-        title changes happen on background threads (the global key listener and
-        the _process worker), and in the packaged .app those background updates
-        were silently dropped — which is why the ⏳ busy icon never appeared.
-        callAfter marshals the change onto the main run loop.
-        """
-        try:
-            from PyObjCTools import AppHelper
-            AppHelper.callAfter(self._apply_title, value)
-        except Exception:
-            self.title = value  # fallback (e.g. no run loop): set directly
-
-    def _apply_title(self, value):
-        self.title = value
+        rumps/AppKit only reliably updates the UI from the main thread, and the
+        title is changed from the key-listener and _process background threads.
+        We simply stash the value here — an atomic attribute assignment that
+        NEVER touches AppKit off-thread, so it cannot crash the app — and the
+        main-thread _tick timer applies it within ~0.25s. This is what makes the
+        ⏳ busy icon reliably appear in the packaged app, without the instability
+        of calling into PyObjC from a background thread."""
+        self._pending_title = value
 
     # ----- menu -----------------------------------------------------------
 

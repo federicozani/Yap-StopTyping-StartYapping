@@ -72,6 +72,10 @@ OPTIONS = {
     "plist": {
         "LSUIElement": True,  # menu bar only, no Dock icon / no app window
         "CFBundleName": "Parla",
+        # A stable identifier so macOS treats every rebuild as the same app
+        # (helps it remember the Microphone / Accessibility / Input Monitoring
+        # permissions instead of seeing a brand-new app each time).
+        "CFBundleIdentifier": "com.parla.app",
         "NSMicrophoneUsageDescription": "Parla records your voice to transcribe it.",
     },
     # sounddevice ships its PortAudio binary inside the _sounddevice_data
