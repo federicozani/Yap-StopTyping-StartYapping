@@ -243,6 +243,36 @@ textarea.prompt:focus { border-color: var(--brand-purple); box-shadow: 0 0 0 3px
 .hk-name { font-family: var(--font-display); font-weight: 800; font-size: 18px; color: var(--ink-900); }
 .hk-desc { font-size: 13px; color: var(--ink-600); margin-top: 2px; }
 
+/* ---- onboarding permissions checklist -------------------------------- */
+.perm-list { display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; }
+.perm-row { display: flex; align-items: center; gap: 16px; padding: 15px 18px;
+  border-radius: var(--r-field); background: var(--gradient-purple-card);
+  border: 1px solid var(--purple-card); }
+.perm-row[data-status="granted"] { border-color: var(--success-green); }
+.perm-ic { width: 46px; height: 46px; flex: 0 0 46px; border-radius: var(--r-card-lg);
+  background: var(--gradient-primary); box-shadow: var(--sh-chip-purple);
+  display: flex; align-items: center; justify-content: center; font-size: 22px; }
+.perm-info { flex: 1 1 auto; }
+.perm-name { font-family: var(--font-display); font-weight: 800; font-size: 16px; color: var(--ink-900); }
+.perm-desc { font-size: 12.5px; color: var(--ink-600); margin-top: 2px; }
+.perm-pill { flex: 0 0 auto; font-size: 12px; font-weight: 700; padding: 5px 11px;
+  border-radius: var(--r-chip); color: var(--ink-500); background: var(--chip-neutral); white-space: nowrap; }
+.perm-row[data-status="granted"] .perm-pill { color: var(--success-green); background: rgba(52,199,89,.14); }
+.perm-row[data-status="denied"] .perm-pill { color: var(--rec-dot); background: rgba(255,59,48,.12); }
+.perm-fix { flex: 0 0 auto; font-size: 12.5px; }
+
+/* ---- onboarding API-key card ----------------------------------------- */
+.key-card { display: flex; align-items: center; gap: 16px; padding: 18px 20px;
+  border-radius: var(--r-field); background: var(--gradient-purple-card);
+  border: 1px solid var(--purple-card); flex: 0 0 auto; }
+.key-ic { width: 52px; height: 52px; flex: 0 0 52px; border-radius: var(--r-card-lg);
+  background: var(--gradient-primary); box-shadow: var(--sh-chip-purple);
+  display: flex; align-items: center; justify-content: center; font-size: 24px; }
+.key-info { flex: 1 1 auto; }
+.key-name { font-family: var(--font-display); font-weight: 800; font-size: 17px; color: var(--ink-900); }
+.key-desc { font-size: 12.5px; color: var(--ink-600); margin-top: 3px; line-height: 1.45; }
+.key-card .btn { flex: 0 0 auto; white-space: nowrap; }
+
 .prompt-demo { border: 1px solid var(--purple-field); border-radius: var(--r-field);
   box-shadow: var(--sh-prompt); overflow: hidden; flex: 0 0 auto; }
 .pd-head { display: flex; align-items: center; gap: 14px; padding: 16px 18px;

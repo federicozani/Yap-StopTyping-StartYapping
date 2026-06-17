@@ -85,6 +85,9 @@ OLD_CONFIG_DIR = Path.home() / ".parla"
 OLD_CONFIG_PATH = OLD_CONFIG_DIR / "config.json"
 OLD_LOG_PATH = OLD_CONFIG_DIR / "parla.log"
 
+# Where onboarding sends users to create a free Gemini API key.
+AISTUDIO_URL = "https://aistudio.google.com/"
+
 
 def resource_path(*parts):
     """Absolute path to a bundled resource (icons, web UI), working both from
@@ -353,6 +356,13 @@ class YapApp(rumps.App):
         self._first_run = not existed
         self._settings_ctrl = None
         self._onboarding_ctrl = None
+        # Onboarding permission walk-through state (Microphone → Input
+        # Monitoring → Accessibility), driven on the main thread by _tick.
+        self._perm_queue = []          # permissions still to request, in order
+        self._perm_active = None       # permission we're currently waiting on
+        self._perm_deadline = 0.0      # give up waiting on _perm_active after this
+        self._perm_advance = False     # set by the (background) mic callback
+        self._perm_last_snapshot = None
         self._panel = None
         self._panel_autoshown = False
         self._click_installed = False  # menu-bar icon click routing set up yet?
@@ -422,6 +432,13 @@ class YapApp(rumps.App):
                 self.show_onboarding(None)
             except Exception:
                 log_exc("failed to show onboarding")
+        # While onboarding is open, keep the permission checklist live and drive
+        # the prompt sequence forward as each one is granted.
+        if self._onboarding_ctrl is not None:
+            try:
+                self._perm_tick()
+            except Exception:
+                log_exc("permission tick failed")
         pending = self._pending_state
         if pending is not None:
             self._pending_state = None
@@ -590,6 +607,107 @@ class YapApp(rumps.App):
             ctrl.close_window()
         elif action == "openSettings":
             self.edit_settings(None)
+        elif action == "permReady":
+            # The permissions step mounted: send current status, then walk the
+            # user through whatever is still missing, one prompt at a time.
+            self._perm_start_sequence()
+        elif action == "requestPermission" and isinstance(payload, dict):
+            self._perm_request_one(payload.get("which"))
+        elif action == "openAccessibilitySettings":
+            try:
+                import permissions
+                permissions.open_accessibility_settings()
+            except Exception:
+                log_exc("failed to open Accessibility settings")
+        elif action == "getApiKey":
+            # Open Google AI Studio so the user can create a free Gemini API key.
+            # Opened via the browser (not the web view, which has no nav delegate).
+            try:
+                subprocess.run(["open", AISTUDIO_URL], check=False)
+            except Exception:
+                log_exc("failed to open AI Studio")
+
+    # ----- onboarding permission walk-through ----------------------------
+
+    def _perm_snapshot(self):
+        try:
+            import permissions
+            return permissions.snapshot()
+        except Exception:
+            log_exc("failed to read permission status")
+            return None
+
+    def _perm_push(self, snap):
+        if self._onboarding_ctrl is not None and snap is not None:
+            self._onboarding_ctrl.push_js("yapPerms", snap)
+
+    def _perm_start_sequence(self):
+        """Push current status, then queue the prompts for the missing ones in
+        order: Microphone → Input Monitoring → Accessibility."""
+        snap = self._perm_snapshot()
+        self._perm_last_snapshot = snap
+        self._perm_push(snap)
+        if snap is None:
+            return
+        order = ["microphone", "inputMonitoring", "accessibility"]
+        self._perm_queue = [k for k in order if snap.get(k) != "granted"]
+        self._perm_active = None
+        self._perm_advance = False
+        self._perm_pump()
+
+    def _perm_pump(self):
+        """Fire the next queued prompt (main thread). Mic resolves via its
+        callback; the others are observed via polling in _tick."""
+        if self._perm_active is not None or not self._perm_queue:
+            return
+        which = self._perm_queue.pop(0)
+        snap = self._perm_snapshot() or {}
+        if snap.get(which) == "granted":
+            self._perm_pump()  # already granted in the meantime — skip ahead
+            return
+        self._perm_active = which
+        self._perm_deadline = time.time() + 30  # don't stall the chain forever
+        try:
+            import permissions
+            permissions.request(which, mic_callback=self._on_mic_result)
+            log(f"onboarding: requested {which} permission")
+        except Exception:
+            log_exc(f"failed to request {which} permission")
+            self._perm_active = None
+            self._perm_pump()
+
+    def _perm_request_one(self, which):
+        """Re-prompt a single permission from a per-row button (best effort)."""
+        if which not in ("microphone", "inputMonitoring", "accessibility"):
+            return
+        try:
+            import permissions
+            permissions.request(which, mic_callback=self._on_mic_result)
+        except Exception:
+            log_exc(f"failed to re-request {which} permission")
+
+    def _on_mic_result(self, granted):
+        # Runs on a background queue — only touch a plain attribute here; _tick
+        # advances the sequence on the main thread.
+        self._perm_advance = True
+
+    def _perm_tick(self):
+        """Called from _tick while onboarding is open: keep the checklist live
+        and advance the prompt sequence as each permission is granted."""
+        snap = self._perm_snapshot()
+        if snap is None:
+            return
+        if snap != self._perm_last_snapshot:
+            self._perm_last_snapshot = snap
+            self._perm_push(snap)
+        if self._perm_active is not None:
+            done = (snap.get(self._perm_active) == "granted"
+                    or self._perm_advance
+                    or time.time() >= self._perm_deadline)
+            if done:
+                self._perm_advance = False
+                self._perm_active = None
+                self._perm_pump()
 
     # ----- quick panel ----------------------------------------------------
 

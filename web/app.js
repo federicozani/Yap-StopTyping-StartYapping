@@ -179,10 +179,17 @@ function initOnboarding() {
       dotsWrap.appendChild(d);
     });
   }
+  var permRequested = false;
   function show(i) {
     idx = Math.max(0, Math.min(steps.length - 1, i));
     steps.forEach(function (s, k) { s.classList.toggle("active", k === idx); });
     paintDots();
+    // The first time the user lands on the permissions step, ask Python to
+    // report status and walk through whatever prompts are still needed.
+    if (!permRequested && steps[idx] && steps[idx].querySelector("#perm-list")) {
+      permRequested = true;
+      send("permReady");
+    }
   }
   document.querySelectorAll("[data-next]").forEach(function (b) {
     b.addEventListener("click", function () { show(idx + 1); });
@@ -196,8 +203,39 @@ function initOnboarding() {
   document.querySelectorAll("[data-settings]").forEach(function (b) {
     b.addEventListener("click", function () { send("openSettings"); });
   });
+  document.querySelectorAll("[data-getkey]").forEach(function (b) {
+    b.addEventListener("click", function () { send("getApiKey"); });
+  });
+  // Permissions step: per-row fallback buttons (shown only once denied).
+  document.querySelectorAll("[data-fix]").forEach(function (b) {
+    var row = b.closest(".perm-row");
+    b.addEventListener("click", function () {
+      send("requestPermission", { which: row.getAttribute("data-perm") });
+    });
+  });
+  document.querySelectorAll("[data-fix-accessibility]").forEach(function (b) {
+    b.addEventListener("click", function () { send("openAccessibilitySettings"); });
+  });
   show(0);
 }
+
+// Python pushes the latest permission status here (see _perm_tick in yap.py).
+window.yapPerms = function (state) {
+  state = state || {};
+  document.querySelectorAll(".perm-row").forEach(function (row) {
+    var which = row.getAttribute("data-perm");
+    var st = state[which] || "unknown";
+    var pill = row.querySelector("[data-pill]");
+    var fix = row.querySelector("[data-fix]");  // mic / input-monitoring retry
+    row.dataset.status = st;
+    if (pill) {
+      pill.textContent = st === "granted" ? "✓ Granted"
+        : st === "denied" ? "Needs access" : "Waiting…";
+    }
+    // Show the per-row retry/Settings button only once we've been denied.
+    if (fix) fix.hidden = (st !== "denied");
+  });
+};
 
 /* =========================== QUICK PANEL ============================ */
 

@@ -83,12 +83,17 @@ OPTIONS = {
     # charset_normalizer is requests' (lazily imported) encoding detector;
     # naming it here ensures py2app bundles it so requests is fully functional.
     # WebKit/Foundation/AppKit (PyObjC) power the embedded web-view UI.
+    # AVFoundation/Quartz/ApplicationServices (PyObjC) back the onboarding
+    # permission detection + prompts (Microphone / Input Monitoring /
+    # Accessibility) in permissions.py.
     "packages": ["rumps", "pynput", "sounddevice", "_sounddevice_data",
                  "numpy", "requests", "charset_normalizer",
-                 "WebKit", "Foundation", "AppKit"],
-    # webui.py is imported lazily (inside methods) by yap.py, so name it
-    # explicitly to be sure py2app bundles it as a real importable module.
-    "includes": ["webui"],
+                 "WebKit", "Foundation", "AppKit",
+                 "AVFoundation", "Quartz", "ApplicationServices"],
+    # webui.py and permissions.py are imported lazily (inside methods) by
+    # yap.py, so name them explicitly to be sure py2app bundles them as real
+    # importable modules.
+    "includes": ["webui", "permissions"],
     "iconfile": "yap.icns",
     # Bundle helper dylibs the interpreter loads via @rpath (see above).
     "frameworks": _find_rpath_dylibs(),

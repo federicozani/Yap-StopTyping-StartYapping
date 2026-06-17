@@ -37,7 +37,7 @@ If you see `Python 3.9` or newer, you're good. If it says "command not found", i
 Yap uses a few small libraries. Paste this one line:
 
 ```
-pip3 install rumps pynput sounddevice numpy requests pyobjc-framework-WebKit
+pip3 install rumps pynput sounddevice numpy requests pyobjc-framework-WebKit pyobjc-framework-AVFoundation
 ```
 
 It prints a lot of text for a minute. As long as the last lines don't say "ERROR", it worked.
@@ -124,7 +124,7 @@ To make a normal `.app` you can double-click (and send to friends), use `py2app`
 cd "/Users/federicozaninelli/Downloads/Claude Code Projects/Parla"
 python3 -m venv build-env
 source build-env/bin/activate
-pip install rumps pynput sounddevice numpy requests pyobjc-framework-WebKit py2app Pillow
+pip install rumps pynput sounddevice numpy requests pyobjc-framework-WebKit pyobjc-framework-AVFoundation py2app Pillow
 pip install --no-binary charset_normalizer charset_normalizer
 python setup_app.py py2app
 deactivate
@@ -134,6 +134,7 @@ This creates `dist/Yap.app` with the Yap fish icon. Double-click it to run.
 
 Notes:
 - `pyobjc-framework-WebKit` powers the Settings / onboarding / quick-panel windows (a native web view — WebKit ships with macOS).
+- `pyobjc-framework-AVFoundation` is used by onboarding to detect and prompt for the Microphone permission (Input Monitoring + Accessibility use Quartz + ApplicationServices, which come with WebKit's dependencies).
 - `Pillow` is only used by `make_icon.py` to generate the icons; the running app never needs it.
 - The `--no-binary charset_normalizer` line installs the pure-Python build of that library so it bundles cleanly (the default has a compiled helper py2app can't find).
 - **First launch asks for the three permissions again** — Yap now has its own identity (`com.yap.app`), so macOS treats it as a new app and re-asks for Microphone / Accessibility / Input Monitoring. Grant them to **Yap**.

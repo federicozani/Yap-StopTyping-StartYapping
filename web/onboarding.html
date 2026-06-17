@@ -25,8 +25,49 @@
       </div>
     </section>
 
-    <!-- STEP 2 -------------------------------------------------------- -->
+    <!-- STEP 2: PERMISSIONS ------------------------------------------- -->
     <section class="step" data-step="2">
+      <h2 class="step-title">Three quick permissions.</h2>
+      <p class="step-intro">macOS will ask for these one at a time — just click
+        <b>Allow</b> on each. This is all the setup there is.</p>
+      <div class="perm-list" id="perm-list">
+        <div class="perm-row" data-perm="microphone">
+          <div class="perm-ic">🎙️</div>
+          <div class="perm-info">
+            <div class="perm-name">Microphone</div>
+            <div class="perm-desc">so Yap can hear you</div>
+          </div>
+          <span class="perm-pill" data-pill>Checking…</span>
+          <button class="btn-ghost perm-fix" data-fix hidden>Open Settings</button>
+        </div>
+        <div class="perm-row" data-perm="inputMonitoring">
+          <div class="perm-ic">⌨️</div>
+          <div class="perm-info">
+            <div class="perm-name">Input Monitoring</div>
+            <div class="perm-desc">to detect the hold-to-talk hotkey</div>
+          </div>
+          <span class="perm-pill" data-pill>Checking…</span>
+          <button class="btn-ghost perm-fix" data-fix hidden>Open Settings</button>
+        </div>
+        <div class="perm-row" data-perm="accessibility">
+          <div class="perm-ic">📋</div>
+          <div class="perm-info">
+            <div class="perm-name">Accessibility</div>
+            <div class="perm-desc">to paste the result into whatever app you’re using</div>
+          </div>
+          <span class="perm-pill" data-pill>Checking…</span>
+          <button class="btn-ghost perm-fix" data-fix-accessibility>Open Settings</button>
+        </div>
+      </div>
+      <div class="onb-foot">
+        <button class="btn-ghost" data-back>← Back</button>
+        <div class="dots"></div>
+        <button class="btn btn-primary" data-next>Next →</button>
+      </div>
+    </section>
+
+    <!-- STEP 3 -------------------------------------------------------- -->
+    <section class="step" data-step="3">
       <h2 class="step-title">Two keys. Zero typing.</h2>
       <p class="step-intro">Hold <b>Right Option (⌥)</b> and tap an arrow to pick what you want.
         Keep holding while you talk; let go when you’re done.</p>
@@ -56,8 +97,8 @@
       </div>
     </section>
 
-    <!-- STEP 3 -------------------------------------------------------- -->
-    <section class="step" data-step="3">
+    <!-- STEP 4 -------------------------------------------------------- -->
+    <section class="step" data-step="4">
       <h2 class="step-title">Every button is just a prompt.</h2>
       <p class="step-intro">Each key runs an instruction you can edit in Settings. Change the words,
         change what Yap does — translate, draft an email, make a to-do list.</p>
@@ -72,6 +113,28 @@
           <div class="pd-text">Transcribe the audio and translate the result into
             <mark>English</mark>. Return only the translated text.</div>
         </div>
+      </div>
+      <div class="onb-foot">
+        <button class="btn-ghost" data-back>← Back</button>
+        <div class="dots"></div>
+        <button class="btn btn-primary" data-next>Next →</button>
+      </div>
+    </section>
+
+    <!-- STEP 5: API KEY ----------------------------------------------- -->
+    <section class="step" data-step="5">
+      <h2 class="step-title">One last thing: your API key.</h2>
+      <p class="step-intro">Yap uses Google Gemini to turn your voice into text, so it
+        needs an API key to work. <b>Gemini 2.5 Flash</b> is the default — and it’s
+        <b>free</b>.</p>
+      <div class="key-card">
+        <div class="key-ic">🔑</div>
+        <div class="key-info">
+          <div class="key-name">Get a free Gemini API key</div>
+          <div class="key-desc">Create one in Google AI Studio (free, no card needed),
+            then paste it into Settings → Voice &amp; model.</div>
+        </div>
+        <button class="btn btn-primary" data-getkey>Get a free API key →</button>
       </div>
       <div class="onb-foot">
         <button class="btn-ghost" data-back>← Back</button>

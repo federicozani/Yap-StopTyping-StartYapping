@@ -3,7 +3,36 @@
     "allow": [
       "Bash(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' dist/Parla.app/Contents/Info.plist)",
       "Bash(git add *)",
-      "Bash(git -c user.name=fix-driver -c user.email=fix-driver@local commit -q -m 'fix-driver: crash-proof icon updates + stable bundle id \\(fix recording regression\\) *)"
+      "Bash(git -c user.name=fix-driver -c user.email=fix-driver@local commit -q -m 'fix-driver: crash-proof icon updates + stable bundle id \\(fix recording regression\\) *)",
+      "Bash(python3 -c \"import WebKit, Foundation, AppKit; print\\('core pyobjc ok'\\)\")",
+      "Bash(pip3 list *)",
+      "Bash(ls -d */)",
+      "Bash(cat requirements.txt)",
+      "Bash(./build-env/bin/python -c ' *)",
+      "Bash(./build-env/bin/pip list *)",
+      "Bash(./build-env/bin/pip install *)",
+      "Bash(./build-env/bin/python -m py_compile yap.py permissions.py webui.py setup_app.py)",
+      "Bash(rm -rf build dist)",
+      "Bash(./build-env/bin/python setup_app.py py2app)",
+      "Bash(ls -la ~/.yap 2>/dev/null && echo \"--- yap currently running? ---\" && pgrep -fl \"Yap.app\" || echo \"\\(not running\\)\")",
+      "Read(//Users/federicozaninelli/.yap/**)",
+      "Bash(pkill -f \"Yap.app/Contents/MacOS/Yap\")",
+      "Bash(cp -R ~/.yap /tmp/yap-config-backup)",
+      "Bash(mv ~/.yap /tmp/yap-firstrun-aside)",
+      "Bash(open dist/Yap.app)",
+      "Bash(rm -rf ~/.yap)",
+      "Bash(mv ~/.parla /tmp/parla-aside)",
+      "Read(//Users/federicozaninelli/.parla/**)",
+      "Bash(screencapture -x /tmp/yap-onboarding.png)",
+      "Bash(osascript -e 'tell application \"System Events\" to set frontmost of \\(first process whose name is \"Yap\"\\) to true')",
+      "Bash(screencapture -x /tmp/yap-onboarding2.png)",
+      "Bash(./build-env/bin/python -)",
+      "Bash(mv /tmp/yap-firstrun-aside ~/.yap)",
+      "Bash(mv /tmp/parla-aside ~/.parla)",
+      "Bash(rm -rf /tmp/yap-config-backup)",
+      "Bash(ls ~/.parla)",
+      "Bash(./build-env/bin/python -m py_compile yap.py)",
+      "Bash(git commit *)"
     ]
   }
 }

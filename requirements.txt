@@ -6,6 +6,9 @@ sounddevice              # recording from the microphone
 numpy                    # holding the audio samples in memory
 requests                 # calling the Gemini API
 pyobjc-framework-WebKit  # the embedded web-view UI (Settings / onboarding / quick panel)
+pyobjc-framework-AVFoundation  # Microphone permission detection/prompt during onboarding
+# (Input Monitoring uses Quartz and Accessibility uses ApplicationServices —
+#  both already ship as dependencies of pyobjc-framework-WebKit.)
 
 # Build-time only (not needed to run from source):
 #   py2app                 — bundles Yap.app
