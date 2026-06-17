@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="app.css">
+<title>Welcome to Yap</title>
+</head>
+<body class="onb-body">
+  <div class="titlebar"><span class="title">Welcome to Yap</span></div>
+
+  <div class="onb">
+    <!-- STEP 1 -------------------------------------------------------- -->
+    <section class="step active" data-step="1">
+      <div class="hero">
+        <div class="stage">
+          <span class="ring r1"></span><span class="ring r2"></span>
+          <img class="mascot" src="../assets/app-logo.png" alt="">
+        </div>
+        <h1 class="hero-title">Stop typing.<br>Start yapping.</h1>
+        <p class="lead">Hold a key, talk, let go. Yap turns your voice into clean text and
+          drops it wherever your cursor is — in any app.</p>
+        <button class="btn btn-primary lg" data-next>Let’s yap →</button>
+        <div class="subcap">Takes 30 seconds · no account needed</div>
+      </div>
+    </section>
+
+    <!-- STEP 2 -------------------------------------------------------- -->
+    <section class="step" data-step="2">
+      <h2 class="step-title">Two keys. Zero typing.</h2>
+      <p class="step-intro">Hold <b>Right Option (⌥)</b> and tap an arrow to pick what you want.
+        Keep holding while you talk; let go when you’re done.</p>
+      <div class="hk-list">
+        <div class="hk-card">
+          <div class="hk-ic">🧹</div>
+          <div class="hk-info"><div class="hk-name">Clean it up</div>
+            <div class="hk-desc">Tidy transcript — fillers and stumbles removed</div></div>
+          <div class="kbd-row"><span class="kbd">⌥</span><span class="kbd plus">+</span><span class="kbd">←</span></div>
+        </div>
+        <div class="hk-card pink">
+          <div class="hk-ic">📝</div>
+          <div class="hk-info"><div class="hk-name">Sum it up</div>
+            <div class="hk-desc">A short summary of your spoken notes</div></div>
+          <div class="kbd-row"><span class="kbd">⌥</span><span class="kbd plus">+</span><span class="kbd">↑</span></div>
+        </div>
+        <div class="hk-card ghost">
+          <div class="hk-ic">＋</div>
+          <div class="hk-info"><div class="hk-name">Make your own</div>
+            <div class="hk-desc">Right (→) and Down (↓) are yours to customise</div></div>
+        </div>
+      </div>
+      <div class="onb-foot">
+        <button class="btn-ghost" data-back>← Back</button>
+        <div class="dots" id="dots"></div>
+        <button class="btn btn-primary" data-next>Next →</button>
+      </div>
+    </section>
+
+    <!-- STEP 3 -------------------------------------------------------- -->
+    <section class="step" data-step="3">
+      <h2 class="step-title">Every button is just a prompt.</h2>
+      <p class="step-intro">Each key runs an instruction you can edit in Settings. Change the words,
+        change what Yap does — translate, draft an email, make a to-do list.</p>
+      <div class="prompt-demo">
+        <div class="pd-head">
+          <div class="pd-ic">🌍</div>
+          <div><div class="pd-name">Translate to English</div>
+            <div class="pd-sub">Custom button · ⌥ + →</div></div>
+        </div>
+        <div class="pd-body">
+          <span class="prompt-eyebrow">Prompt</span>
+          <div class="pd-text">Transcribe the audio and translate the result into
+            <mark>English</mark>. Return only the translated text.</div>
+        </div>
+      </div>
+      <div class="onb-foot">
+        <button class="btn-ghost" data-back>← Back</button>
+        <div class="dots"></div>
+        <button class="btn btn-primary" data-settings style="margin-right:8px">Open Settings</button>
+        <button class="btn btn-primary" data-finish>Start yapping 🎉</button>
+      </div>
+    </section>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

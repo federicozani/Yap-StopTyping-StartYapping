@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="app.css">
+<title>Yap Settings</title>
+</head>
+<body>
+  <div class="titlebar"><span class="title">Yap Settings</span></div>
+  <div class="shell">
+    <aside class="sidebar">
+      <nav class="nav">
+        <div class="nav-item active" data-pane="buttons"><span class="ico">🎛️</span> Buttons &amp; keys</div>
+        <div class="nav-item" data-pane="voice"><span class="ico">🔑</span> Voice &amp; model</div>
+        <div class="nav-item" data-pane="about"><span class="ico">🐟</span> About</div>
+      </nav>
+      <div class="side-footer">
+        <img class="logo" src="../assets/app-logo.png" alt="">
+        <div class="ver">Yap v1.0 — <b>“Mackerel”</b></div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <!-- BUTTONS & KEYS ------------------------------------------------ -->
+      <section class="pane active" id="pane-buttons">
+        <div class="section-title">Buttons &amp; keys</div>
+        <div class="section-desc">Every button is just a prompt tied to a hold-to-talk key.
+          Hold <b>Right Option (⌥)</b> and tap the arrow to use it.</div>
+        <div class="banner" id="banner"></div>
+        <div id="modes"></div>
+        <button class="btn-dashed" id="add-mode">＋ &nbsp;Add a button</button>
+        <div class="toolbar">
+          <span class="saved-flash" id="saved">Saved ✓ — Yap picks it up automatically</span>
+          <span class="spacer"></span>
+          <button class="btn btn-primary" id="save">Save</button>
+        </div>
+      </section>
+
+      <!-- VOICE & MODEL ------------------------------------------------- -->
+      <section class="pane" id="pane-voice">
+        <div class="section-title">Voice &amp; model</div>
+        <div class="section-desc">Your Gemini API key and the model Yap uses to transcribe.</div>
+        <div style="margin-bottom:22px">
+          <label class="field-label" for="api">Gemini API key</label>
+          <div class="secure-wrap">
+            <input class="field" id="api" type="password" autocomplete="off" spellcheck="false"
+                   placeholder="Paste your free key from aistudio.google.com">
+            <button class="eye" id="eye" title="Show / hide">👁</button>
+          </div>
+          <div class="row" style="border:none;padding:8px 0 0">
+            <div class="help">Get a free key at aistudio.google.com — it’s stored only on this Mac.</div>
+          </div>
+        </div>
+        <div>
+          <label class="field-label" for="model">Model</label>
+          <select class="select" id="model" style="min-width:240px"></select>
+        </div>
+        <div class="toolbar">
+          <span class="saved-flash" id="saved2">Saved ✓</span>
+          <span class="spacer"></span>
+          <button class="btn btn-primary" id="save2">Save</button>
+        </div>
+      </section>
+
+      <!-- ABOUT --------------------------------------------------------- -->
+      <section class="pane" id="pane-about">
+        <div class="about">
+          <img class="logo" src="../assets/app-logo.png" alt="">
+          <h1>Yap</h1>
+          <p>Stop typing. Start yapping.<br>
+             A tiny menu-bar dictation app powered by Gemini.<br>
+             Version 1.0 — “Mackerel”</p>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

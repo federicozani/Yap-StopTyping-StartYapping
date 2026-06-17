@@ -347,7 +347,12 @@ class YapApp(rumps.App):
     def __init__(self):
         idle_icon, idle_tmpl = ICON_STATES["idle"]
         super().__init__("", icon=idle_icon, template=idle_tmpl, quit_button=None)
+        # First run = neither a Yap nor an old Parla config existed before now.
+        existed = CONFIG_PATH.exists() or OLD_CONFIG_PATH.exists()
         self.config = load_config()
+        self._first_run = not existed
+        self._settings_ctrl = None
+        self._onboarding_ctrl = None
         self._config_mtime = CONFIG_PATH.stat().st_mtime
         self.recorder = Recorder()
         self.recording = False
@@ -401,6 +406,14 @@ class YapApp(rumps.App):
     def _tick(self, _):
         """Runs ~4x/second ON THE MAIN THREAD. Applies any pending state change,
         shows the live recording countdown, and reverts the 'done' check."""
+        # On the very first run, greet the user with the onboarding window once
+        # the app's run loop is up (doing it here keeps it on the main thread).
+        if self._first_run:
+            self._first_run = False
+            try:
+                self.show_onboarding(None)
+            except Exception:
+                log_exc("failed to show onboarding")
         pending = self._pending_state
         if pending is not None:
             self._pending_state = None
@@ -439,11 +452,12 @@ class YapApp(rumps.App):
             items.append(f"   {label}  →  {m['name']}")
         items += [
             None,
+            rumps.MenuItem("Settings…", callback=self.edit_settings),
             rumps.MenuItem("Set Gemini API key…", callback=self.set_api_key),
-            rumps.MenuItem("Edit prompts & hotkeys…", callback=self.edit_settings),
             rumps.MenuItem("Open config file…", callback=self.open_config_file),
             rumps.MenuItem("Restore default prompts", callback=self.restore_defaults),
             rumps.MenuItem("Reload settings", callback=self.reload_settings),
+            rumps.MenuItem("Show welcome screen…", callback=self.show_onboarding),
             None,
             rumps.MenuItem("Quit Yap", callback=rumps.quit_application),
         ]
@@ -470,11 +484,87 @@ class YapApp(rumps.App):
                 notify("Yap", "API key saved", "")
 
     def edit_settings(self, _):
-        """Open the visual settings window.
+        """Open the embedded web-view Settings window (Buttons & keys, Voice &
+        model, About). Reads and writes the same ~/.yap/config.json."""
+        try:
+            import webui
+            self._maybe_reload()
+            if self._settings_ctrl is not None:
+                self._settings_ctrl.show_window()
+                self._settings_ctrl.push_js("yapInit", self._public_config())
+                return
 
-        (Replaced in a later step with an embedded web-view editor; for now this
-        opens the config file as a reliable fallback.)"""
-        self.open_config_file(None)
+            def on_close(ctrl):
+                self._settings_ctrl = None
+
+            self._settings_ctrl = webui.open_window(
+                resource_path("web", "settings.html"), resource_path("web"),
+                title="Yap Settings", size=(760, 640), resizable=True,
+                min_size=(640, 460),
+                on_message=self._on_settings_message, on_close=on_close)
+        except Exception:
+            log_exc("failed to open Settings web view; opening config file instead")
+            self.open_config_file(None)
+
+    def show_onboarding(self, _):
+        """Open the 3-step welcome / onboarding window (embedded web view)."""
+        try:
+            import webui
+            if self._onboarding_ctrl is not None:
+                self._onboarding_ctrl.show_window()
+                return
+
+            def on_close(ctrl):
+                self._onboarding_ctrl = None
+
+            self._onboarding_ctrl = webui.open_window(
+                resource_path("web", "onboarding.html"), resource_path("web"),
+                title="Welcome to Yap", size=(700, 600), resizable=False,
+                on_message=self._on_onboarding_message, on_close=on_close)
+        except Exception:
+            log_exc("failed to open onboarding web view")
+
+    def _public_config(self):
+        """The slice of config the web UI needs (and is allowed to write back)."""
+        return {
+            "api_key": self.config.get("api_key", ""),
+            "model": self.config.get("model", "gemini-2.5-flash"),
+            "modes": [dict(m) for m in self.config.get("modes", [])],
+        }
+
+    def _on_settings_message(self, action, payload, ctrl):
+        """Handle messages from the Settings web view (main thread)."""
+        if action == "ready":
+            ctrl.push_js("yapInit", self._public_config())
+        elif action == "save" and isinstance(payload, dict):
+            try:
+                valid = {"left", "up", "right", "down"}
+                modes = []
+                for m in payload.get("modes", []):
+                    hk = m.get("hotkey", "left")
+                    modes.append({
+                        "name": (m.get("name") or "Button").strip(),
+                        "hotkey": hk if hk in valid else "left",
+                        "prompt": (m.get("prompt") or "").strip(),
+                    })
+                if not modes:
+                    ctrl.push_js("yapSaved", False)
+                    return
+                self.config["api_key"] = (payload.get("api_key") or "").strip()
+                self.config["model"] = (payload.get("model") or "gemini-2.5-flash").strip()
+                self.config["modes"] = modes
+                self._save_config()  # writes config.json, rebuilds menu, refreshes hotkeys
+                log("settings saved from web UI")
+                ctrl.eval_js("window.yapSaved && window.yapSaved(true);")
+            except Exception:
+                log_exc("failed to save settings from web UI")
+                ctrl.eval_js("window.yapSaved && window.yapSaved(false);")
+
+    def _on_onboarding_message(self, action, payload, ctrl):
+        if action == "finishOnboarding":
+            ctrl.close_window()
+        elif action == "openSettings":
+            self.edit_settings(None)
 
     def open_config_file(self, _):
         # Opens config.json in the default text editor (a reliable fallback).

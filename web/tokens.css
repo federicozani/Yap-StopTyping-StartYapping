@@ -1,0 +1,97 @@
+/* Design tokens for Yap — mirrored from design/design-tokens.json.
+   Values in points/pixels at 1x. Keep in sync with the JSON. */
+
+/* Bundled display + UI fonts (downloaded from Google Fonts at build time).
+   If a face is missing, the fallback stack in --font-* takes over. */
+@font-face { font-family: "Bricolage Grotesque"; font-weight: 700;
+  src: local("Bricolage Grotesque"), url("fonts/Bricolage-700.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "Bricolage Grotesque"; font-weight: 800;
+  src: local("Bricolage Grotesque"), url("fonts/Bricolage-800.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "Hanken Grotesk"; font-weight: 400;
+  src: local("Hanken Grotesk"), url("fonts/Hanken-400.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "Hanken Grotesk"; font-weight: 600;
+  src: local("Hanken Grotesk"), url("fonts/Hanken-600.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "Hanken Grotesk"; font-weight: 700;
+  src: local("Hanken Grotesk"), url("fonts/Hanken-700.woff2") format("woff2"); font-display: swap; }
+
+:root {
+  /* brand */
+  --brand-purple: #9B45E8;
+  --brand-purple-deep: #7C46E8;
+  --brand-magenta: #C247CB;
+  --brand-magenta-alt: #B048D0;
+  --brand-pink: #FF5BA6;
+  --brand-pink-text: #E0479A;
+  --brand-coral: #FF8A5B;
+  --gradient-primary: linear-gradient(135deg, #9B45E8 0%, #FF5BA6 100%);
+  --gradient-app: linear-gradient(145deg, #A347EC 0%, #C247CB 45%, #FF5BA6 100%);
+  --gradient-purple-card: linear-gradient(160deg, #faf2ff 0%, #fff0f8 100%);
+  --gradient-pink-card: linear-gradient(160deg, #fff0f8 0%, #fff5ef 100%);
+  --gradient-titlebar: linear-gradient(180deg, #fbf8fe 0%, #f4eefb 100%);
+  --gradient-sidebar-sel: linear-gradient(135deg, #F1E2FB 0%, #FCE2EF 100%);
+  --gradient-toggle-on: linear-gradient(135deg, #9B45E8 0%, #FF5BA6 100%);
+  --gradient-icon-pink: linear-gradient(135deg, #FF5BA6 0%, #FF8A5B 100%);
+
+  /* ink */
+  --ink-900: #2A0E3A;
+  --ink-850: #3A1155;
+  --ink-800: #3A2150;
+  --ink-700: #5C4470;
+  --ink-600: #6B5680;
+  --ink-550: #7A5C92;
+  --ink-500: #8A6FA0;
+  --ink-400: #9A7DB2;
+  --ink-300: #A48ABA;
+  --ink-250: #B9A6CC;
+
+  /* surface */
+  --white: #ffffff;
+  --tint-lavender: #FBF8FE;
+  --tint-lavender-2: #F7F1FC;
+  --tint-lavender-3: #FAF6FD;
+  --tint-purple-hi: #faf2ff;
+  --tint-pink-hi: #fff0f8;
+  --chip-purple: #F1E2FB;
+  --chip-pink: #FCE2EF;
+  --chip-neutral: #F2EAF9;
+  --row-divider: #F2ECF8;
+
+  /* border */
+  --hairline-06: rgba(42,14,58,0.06);
+  --hairline-08: rgba(42,14,58,0.08);
+  --hairline-10: rgba(42,14,58,0.10);
+  --purple-field: #ECDDF4;
+  --purple-field-alt: #EEE2F8;
+  --purple-card: #F0DDF6;
+  --border-key: #E2D2EE;
+  --row-line: #F0E8F7;
+  --border-dashed: #DCC8EC;
+  --pink-card: #F6D9E9;
+  --pink-key: #F2D2E0;
+
+  /* status */
+  --rec-dot: #FF4D4D;
+  --success-green: #28C840;
+  --highlight-yellow: #FFE9A8;
+  --traffic-red: #FF5F57;
+  --traffic-yellow: #FEBC2E;
+  --traffic-green: #28C840;
+  --toggle-off-track: #E4D8EF;
+
+  /* fonts */
+  --font-display: "Bricolage Grotesque", "Trebuchet MS", Verdana, sans-serif;
+  --font-ui: "Hanken Grotesk", -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+
+  /* radii */
+  --r-xs: 4px;  --r-sm: 7px;  --r-key: 9px;  --r-chip: 10px;
+  --r-control: 11px; --r-card: 12px; --r-card-lg: 13px; --r-field: 14px;
+  --r-panel: 18px; --r-pill: 20px;
+
+  /* shadows */
+  --sh-window: 0 22px 54px rgba(42,14,58,0.20), 0 2px 8px rgba(42,14,58,0.08);
+  --sh-button: 0 10px 24px rgba(184,69,200,0.40);
+  --sh-chip-purple: 0 6px 14px rgba(155,69,232,0.35);
+  --sh-chip-pink: 0 6px 14px rgba(255,91,166,0.35);
+  --sh-prompt: 0 8px 22px rgba(42,14,58,0.06);
+  --sh-panel: 0 26px 60px rgba(42,14,58,0.28);
+}
