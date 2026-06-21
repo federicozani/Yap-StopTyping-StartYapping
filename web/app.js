@@ -13,6 +13,16 @@ var HOTKEYS = [
   { v: "right", label: "⌥ + →" },
   { v: "down",  label: "⌥ + ↓" }
 ];
+// Text modes (e.g. Rewrite) fire on Control+Option + a letter — separate from
+// the voice "Right Option + arrow" combos, so the two can't conflict.
+var TEXT_HOTKEYS = ["r", "e", "t", "y", "u", "i", "o", "p", "j", "k", "l"].map(
+  function (c) { return { v: c, label: "⌃⌥ + " + c.toUpperCase() }; }
+);
+var DEFAULT_REWRITE_PROMPT =
+  "Rewrite the following text in a clean, clear, professional way. Keep my " +
+  "meaning and key points. Return only the rewritten text, with no preamble " +
+  "or commentary. Do not use em dashes; use commas, colons, or separate " +
+  "sentences instead.";
 var MODEL_OPTIONS = [
   "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
   "gemini-1.5-flash", "gemini-1.5-pro"
@@ -42,23 +52,40 @@ function hotkeySelect(value) {
   return s;
 }
 
+function letterSelect(value) {
+  // The Control+Option + letter picker for text modes. If the saved letter
+  // isn't in our default list (hand-edited config), show it anyway so it sticks.
+  var s = el("select", "hk-select");
+  var opts = TEXT_HOTKEYS.slice();
+  if (value && !opts.some(function (h) { return h.v === value; })) {
+    opts.unshift({ v: value, label: "⌃⌥ + " + String(value).toUpperCase() });
+  }
+  opts.forEach(function (h) {
+    var o = el("option"); o.value = h.v; o.textContent = h.label;
+    if (h.v === value) o.selected = true;
+    s.appendChild(o);
+  });
+  return s;
+}
+
 function renderModes() {
   var wrap = document.getElementById("modes");
   wrap.innerHTML = "";
   CONFIG.modes.forEach(function (m, i) {
+    var isText = (m.input === "text");
     var pink = /sum/i.test(m.name || "");
-    var card = el("div", "mode-card" + (pink ? " pink" : ""));
+    var card = el("div", "mode-card" + (pink ? " pink" : "") + (isText ? " text-mode" : ""));
 
     var head = el("div", "mode-head");
-    var icon = el("div", "mode-icon", MODE_EMOJI[i % MODE_EMOJI.length]);
+    var icon = el("div", "mode-icon", isText ? "✍️" : MODE_EMOJI[i % MODE_EMOJI.length]);
     var meta = el("div", "mode-meta");
     var name = el("input", "mode-name"); name.value = m.name || ""; name.placeholder = "Button name";
     name.addEventListener("input", function () { m.name = name.value; });
-    var sub = el("div", "mode-sub", "Custom button");
+    var sub = el("div", "mode-sub", isText ? "Text mode · select, then ⌃⌥ shortcut" : "Voice mode");
     meta.appendChild(name); meta.appendChild(sub);
 
     var kbd = el("div", "kbd-row");
-    var hk = hotkeySelect(m.hotkey);
+    var hk = isText ? letterSelect(m.hotkey) : hotkeySelect(m.hotkey);
     hk.addEventListener("change", function () { m.hotkey = hk.value; });
     kbd.appendChild(hk);
 
@@ -112,12 +139,18 @@ function collectAndValidate() {
   for (var i = 0; i < CONFIG.modes.length; i++) {
     var m = CONFIG.modes[i];
     if (!m.name || !m.name.trim()) m.name = "Button";
-    if (used[m.hotkey]) {
-      var lbl = HOTKEYS.filter(function (h) { return h.v === m.hotkey; })[0];
-      banner("Two buttons use " + (lbl ? lbl.label : m.hotkey) + ". Each hotkey can only be used once.");
+    var isText = (m.input === "text");
+    // Voice (arrows) and text (letters) are separate namespaces, so a key only
+    // clashes with another button of the same type.
+    var key = (isText ? "text:" : "audio:") + m.hotkey;
+    if (used[key]) {
+      var list = isText ? TEXT_HOTKEYS : HOTKEYS;
+      var lbl = list.filter(function (h) { return h.v === m.hotkey; })[0];
+      banner("Two " + (isText ? "text" : "voice") + " buttons use " +
+        (lbl ? lbl.label : m.hotkey) + ". Each shortcut can only be used once.");
       return null;
     }
-    used[m.hotkey] = true;
+    used[key] = true;
   }
   banner("");
   return CONFIG;
@@ -151,9 +184,17 @@ function initSettings() {
   });
   document.getElementById("add-mode").addEventListener("click", function () {
     var freeHk = (HOTKEYS.filter(function (h) {
-      return !CONFIG.modes.some(function (m) { return m.hotkey === h.v; });
+      return !CONFIG.modes.some(function (m) { return m.input !== "text" && m.hotkey === h.v; });
     })[0] || HOTKEYS[0]).v;
-    CONFIG.modes.push({ name: "New button", hotkey: freeHk, prompt: "" });
+    CONFIG.modes.push({ name: "New button", input: "audio", hotkey: freeHk, prompt: "" });
+    renderModes();
+  });
+  var addText = document.getElementById("add-text-mode");
+  if (addText) addText.addEventListener("click", function () {
+    var freeHk = (TEXT_HOTKEYS.filter(function (h) {
+      return !CONFIG.modes.some(function (m) { return m.input === "text" && m.hotkey === h.v; });
+    })[0] || TEXT_HOTKEYS[0]).v;
+    CONFIG.modes.push({ name: "Rewrite", input: "text", hotkey: freeHk, prompt: DEFAULT_REWRITE_PROMPT });
     renderModes();
   });
   document.getElementById("save").addEventListener("click", function () { doSave("saved"); });
@@ -284,14 +325,26 @@ function renderPanelRows(modes) {
   var wrap = document.getElementById("rows");
   wrap.innerHTML = "";
   modes.forEach(function (m, i) {
-    var hk = HOTKEYS.filter(function (h) { return h.v === m.hotkey; })[0];
+    var isText = (m.input === "text");
+    var keyLabel, sub, icon;
+    if (isText) {
+      var th = TEXT_HOTKEYS.filter(function (h) { return h.v === m.hotkey; })[0];
+      keyLabel = th ? th.label : ("⌃⌥ + " + String(m.hotkey || "").toUpperCase());
+      sub = "Select text, press the keys";
+      icon = "✍️";
+    } else {
+      var hk = HOTKEYS.filter(function (h) { return h.v === m.hotkey; })[0];
+      keyLabel = hk ? hk.label : m.hotkey;
+      sub = "Hold ⌥, tap the key";
+      icon = MODE_EMOJI[i % MODE_EMOJI.length];
+    }
     var pink = /sum/i.test(m.name || "");
     var row = el("div", "prow");
     row.innerHTML =
-      '<div class="prow-icon' + (pink ? " pink" : "") + '">' + MODE_EMOJI[i % MODE_EMOJI.length] + '</div>' +
+      '<div class="prow-icon' + (pink ? " pink" : "") + '">' + icon + '</div>' +
       '<div class="prow-meta"><div class="prow-title">' + escapeHtml(m.name || "Button") + '</div>' +
-      '<div class="prow-sub">Hold ⌥, tap the key</div></div>' +
-      '<div class="prow-key">' + (hk ? hk.label : m.hotkey) + '</div>';
+      '<div class="prow-sub">' + sub + '</div></div>' +
+      '<div class="prow-key">' + escapeHtml(keyLabel) + '</div>';
     wrap.appendChild(row);
   });
 }

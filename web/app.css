@@ -148,6 +148,14 @@ textarea.field { resize: vertical; line-height: 1.6; min-height: 92px; }
   background: var(--gradient-primary); box-shadow: var(--sh-chip-purple);
   display: flex; align-items: center; justify-content: center; font-size: 22px; }
 .mode-card.pink .mode-icon { background: var(--gradient-icon-pink); box-shadow: var(--sh-chip-pink); }
+/* Text-mode card (e.g. Rewrite): a distinct blue/teal accent vs. voice (purple). */
+.mode-card.text-mode { background: linear-gradient(160deg, #eef4ff 0%, #f3fbff 100%);
+  border-color: #d8e6ff; }
+.mode-card.text-mode .mode-icon { background: linear-gradient(135deg, #4D8BFF 0%, #36C9C0 100%);
+  box-shadow: 0 6px 14px rgba(54, 150, 201, 0.35); }
+/* Two dashed adders (voice / text) side by side. */
+.add-row { display: flex; gap: 12px; }
+.add-row .btn-dashed { flex: 1 1 0; }
 .mode-meta { flex: 1 1 auto; min-width: 0; }
 .mode-name {
   font-family: var(--font-display); font-weight: 800; font-size: 18px; color: var(--ink-900);

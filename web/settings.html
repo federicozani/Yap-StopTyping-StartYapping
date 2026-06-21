@@ -25,11 +25,16 @@
       <!-- BUTTONS & KEYS ------------------------------------------------ -->
       <section class="pane active" id="pane-buttons">
         <div class="section-title">Buttons &amp; keys</div>
-        <div class="section-desc">Every button is just a prompt tied to a hold-to-talk key.
-          Hold <b>Right Option (⌥)</b> and tap the arrow to use it.</div>
+        <div class="section-desc">Two kinds of button.
+          <b>Voice</b>: hold <b>Right Option (⌥)</b> and tap an arrow, then speak.
+          <b>Text</b>: select text in any app, then tap a letter while holding
+          <b>Control+Option (⌃⌥)</b> to rewrite it in place.</div>
         <div class="banner" id="banner"></div>
         <div id="modes"></div>
-        <button class="btn-dashed" id="add-mode">＋ &nbsp;Add a button</button>
+        <div class="add-row">
+          <button class="btn-dashed" id="add-mode">＋ &nbsp;Add a voice button</button>
+          <button class="btn-dashed" id="add-text-mode">＋ &nbsp;Add a text button</button>
+        </div>
         <div class="toolbar">
           <span class="saved-flash" id="saved">Saved ✓ — Yap picks it up automatically</span>
           <span class="spacer"></span>

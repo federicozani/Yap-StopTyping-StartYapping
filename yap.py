@@ -114,10 +114,54 @@ SAMPLE_RATE = 16000  # 16 kHz mono is plenty for speech and keeps files small.
 CHANNELS = 1
 
 # How triggering works:
-#   You HOLD the "activator" key (Right Option, ⌥) the whole time you talk.
-#   While holding it, you TAP an arrow key to choose the mode and start
-#   recording. Release the activator to stop and process.
-# So each mode is bound to an arrow: "left", "up", "right", or "down".
+#   VOICE modes — you HOLD the "activator" key (Right Option, ⌥) the whole time
+#   you talk. While holding it, you TAP an arrow key to choose the mode and start
+#   recording. Release the activator to stop and process. So each voice mode is
+#   bound to an arrow: "left", "up", "right", or "down".
+#
+#   TEXT modes (e.g. "Rewrite") — there's no recording. You select text in any
+#   app, then tap a letter while holding Control+Option (⌃⌥). Yap copies the
+#   selection, sends it to Gemini with the mode's prompt, and pastes the result
+#   back over the selection. So each text mode is bound to a letter ("r", "e", …).
+
+# Valid hotkeys for each input type. Voice modes use the four arrows; text modes
+# use a letter (triggered with Control+Option held).
+ARROW_HOTKEYS = {"left", "up", "right", "down"}
+
+# Letter → macOS virtual-key code (Carbon HIToolbox <Events.h>, kVK_ANSI_*).
+# We match the text-mode chord by the key's *virtual-key code*, NOT the character
+# it produces: with Control/Option held, macOS reports odd characters (⌥R → "®"),
+# but the vk of a physical key is stable regardless of modifiers.
+LETTER_VK = {
+    "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4,
+    "i": 34, "j": 38, "k": 40, "l": 37, "m": 46, "n": 45, "o": 31,
+    "p": 35, "q": 12, "r": 15, "s": 1, "t": 17, "u": 32, "v": 9,
+    "w": 13, "x": 7, "y": 16, "z": 6,
+}
+VK_TO_LETTER = {vk: ltr for ltr, vk in LETTER_VK.items()}
+TEXT_HOTKEYS = set(LETTER_VK)
+
+
+def chord_letter(key):
+    """Return the lowercase letter for a pressed pynput key using its macOS
+    virtual-key code (so Control/Option don't change the result), or None if the
+    key isn't a letter."""
+    vk = getattr(key, "vk", None)
+    if vk in VK_TO_LETTER:
+        return VK_TO_LETTER[vk]
+    ch = getattr(key, "char", None)  # fallback if vk is unavailable
+    if ch and len(ch) == 1 and ch.isalpha():
+        return ch.lower()
+    return None
+
+
+def _hotkey_valid(mode):
+    """True if a mode's hotkey is valid for its input type (arrow for voice
+    modes, a letter for text modes)."""
+    if mode.get("input", "audio") == "text":
+        return mode.get("hotkey") in TEXT_HOTKEYS
+    return mode.get("hotkey") in ARROW_HOTKEYS
+
 
 DEFAULT_CONFIG = {
     "api_key": "PASTE_YOUR_GEMINI_API_KEY_HERE",
@@ -125,10 +169,11 @@ DEFAULT_CONFIG = {
     # Bumped whenever the built-in prompts change. On startup, if your config's
     # version is older, the modes are refreshed to these defaults (your API key
     # and model are kept). This means new prompt fixes apply on a simple restart.
-    "config_version": 3,
+    "config_version": 4,
     "modes": [
         {
             "name": "Clean",
+            "input": "audio",
             "hotkey": "left",
             "prompt": (
                 "Transcribe the audio in the same language it is spoken, then "
@@ -142,6 +187,7 @@ DEFAULT_CONFIG = {
         },
         {
             "name": "Summary",
+            "input": "audio",
             "hotkey": "up",
             "prompt": (
                 "You are summarizing MY own spoken notes. I am both the speaker "
@@ -166,6 +212,7 @@ DEFAULT_CONFIG = {
         },
         {
             "name": "Raw",
+            "input": "audio",
             "hotkey": "right",
             "prompt": (
                 "Transcribe the following audio word for word in the same "
@@ -175,11 +222,25 @@ DEFAULT_CONFIG = {
         },
         {
             "name": "Custom",
+            "input": "audio",
             "hotkey": "down",
             "prompt": (
                 "Transcribe the following audio and translate the result into "
                 "English. Return ONLY the translated text. (This is your custom "
                 "slot — edit this prompt to do whatever you want.)"
+            ),
+        },
+        {
+            # A TEXT mode (no recording): select text anywhere, then tap this
+            # letter while holding Control+Option (⌃⌥) to rewrite the selection.
+            "name": "Rewrite",
+            "input": "text",
+            "hotkey": "r",  # Control+Option+R
+            "prompt": (
+                "Rewrite the following text in a clean, clear, professional way. "
+                "Keep my meaning and key points. Return only the rewritten text, "
+                "with no preamble or commentary. Do not use em dashes; use commas, "
+                "colons, or separate sentences instead."
             ),
         },
     ],
@@ -216,7 +277,6 @@ def load_config():
         return DEFAULT_CONFIG
     with open(CONFIG_PATH) as f:
         cfg = json.load(f)
-    valid = {"left", "up", "right", "down"}
     needs_save = False
     # If the built-in prompts have been updated (newer version), refresh the
     # modes to the latest defaults, keeping the user's API key and model.
@@ -224,8 +284,8 @@ def load_config():
         cfg["modes"] = [dict(m) for m in DEFAULT_CONFIG["modes"]]
         cfg["config_version"] = DEFAULT_CONFIG["config_version"]
         needs_save = True
-    # Safety net: fix any invalid/old hotkeys.
-    elif not cfg.get("modes") or not all(m.get("hotkey") in valid for m in cfg["modes"]):
+    # Safety net: fix any invalid/old hotkeys (arrows for voice, letters for text).
+    elif not cfg.get("modes") or not all(_hotkey_valid(m) for m in cfg["modes"]):
         cfg["modes"] = [dict(m) for m in DEFAULT_CONFIG["modes"]]
         needs_save = True
     if needs_save:
@@ -238,25 +298,18 @@ def load_config():
 # Gemini: send audio + a prompt, get back finished text.
 # ---------------------------------------------------------------------------
 
-def transcribe_with_gemini(wav_bytes: bytes, prompt: str, api_key: str,
-                           model: str, retries: int = 5) -> str:
-    """Send WAV audio + an instruction to Gemini and return the text result.
+def _gemini_generate(parts: list, api_key: str, model: str,
+                     retries: int = 5) -> str:
+    """POST a single-turn request (a list of content `parts`) to Gemini and
+    return the text result.
 
     Retries automatically on transient "busy" errors (429/500/503), which
-    Google returns when the model is temporarily overloaded.
+    Google returns when the model is temporarily overloaded. Shared by the audio
+    (transcribe) and text (rewrite) paths so they use the same key, model,
+    backoff and logging.
     """
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
-    body = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": "audio/wav", "data": audio_b64}},
-                ]
-            }
-        ]
-    }
+    body = {"contents": [{"parts": parts}]}
     last_resp = None
     for attempt in range(retries):
         resp = requests.post(
@@ -281,6 +334,26 @@ def transcribe_with_gemini(wav_bytes: bytes, prompt: str, api_key: str,
     if last_resp is not None:
         last_resp.raise_for_status()
     return ""
+
+
+def transcribe_with_gemini(wav_bytes: bytes, prompt: str, api_key: str,
+                           model: str, retries: int = 5) -> str:
+    """Send WAV audio + an instruction to Gemini and return the text result."""
+    audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
+    parts = [
+        {"text": prompt},
+        {"inline_data": {"mime_type": "audio/wav", "data": audio_b64}},
+    ]
+    return _gemini_generate(parts, api_key, model, retries)
+
+
+def rewrite_with_gemini(text: str, prompt: str, api_key: str,
+                        model: str, retries: int = 5) -> str:
+    """Send selected text + an instruction to Gemini as a plain-text request
+    (no audio) and return the rewritten result. Reuses the same retry/backoff
+    and logging as the audio path."""
+    parts = [{"text": prompt.rstrip() + "\n\n" + text}]
+    return _gemini_generate(parts, api_key, model, retries)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +410,33 @@ def paste_text(text: str):
         _kbd.release("v")
 
 
+def copy_selection() -> str:
+    """Simulate Cmd+C to copy the current selection, then return it as text.
+
+    Used by text modes (e.g. Rewrite). To tell "nothing is selected" apart from
+    "the clipboard happens to hold old text", we first drop a hidden sentinel on
+    the clipboard: a real selection replaces it, but if nothing is selected the
+    sentinel survives and we return "" so the caller can quietly do nothing.
+    """
+    sentinel = "\x00yap-no-selection\x00"
+    try:
+        subprocess.run("pbcopy", input=sentinel.encode("utf-8"), check=True)
+    except Exception:
+        log_exc("copy_selection: failed to seed clipboard sentinel")
+    time.sleep(0.05)
+    with _kbd.pressed(keyboard.Key.cmd):
+        _kbd.press("c")
+        _kbd.release("c")
+    time.sleep(0.2)  # give the frontmost app time to write its selection out
+    try:
+        out = subprocess.run("pbpaste", capture_output=True, check=True).stdout
+    except Exception:
+        log_exc("copy_selection: pbpaste failed")
+        return ""
+    text = out.decode("utf-8", errors="replace")
+    return "" if text == sentinel else text
+
+
 # ---------------------------------------------------------------------------
 # The menu bar app itself.
 # ---------------------------------------------------------------------------
@@ -371,6 +471,9 @@ class YapApp(rumps.App):
         self.recorder = Recorder()
         self.recording = False
         self.option_down = False  # is the activator (Right Option) being held?
+        self.ctrl_down = False    # is Control held? (for the text-rewrite chord)
+        self.alt_down = False     # is Option/Alt held? (either side; for the chord)
+        self._text_busy = False   # a text-rewrite (copy → Gemini → paste) is in flight
         self.active_mode = None
         self.last_yap = ""        # most recent transcript (shown in the quick panel)
         self._record_start = None  # when the current recording began
@@ -378,8 +481,8 @@ class YapApp(rumps.App):
         self._pending_state = None  # state requested off-thread; applied in _tick
         self._done_until = 0.0      # when to revert the "done" check back to idle
         self._lock = threading.Lock()  # guards starting/stopping a recording
-        # Map each hotkey string ("left", "up", …) to its mode dict.
-        self.hotkey_map = {m["hotkey"]: m for m in self.config["modes"]}
+        # Split modes into the two trigger namespaces (arrows vs. letters).
+        self._rebuild_hotkey_maps()
 
         self._build_menu()
         self._start_listener()
@@ -489,8 +592,12 @@ class YapApp(rumps.App):
             "down": "Right Option + ↓ Down",
         }
         for m in self.config["modes"]:
-            label = key_labels.get(m["hotkey"], m["hotkey"])
-            items.append(f"   {label}  →  {m['name']}")
+            if m.get("input", "audio") == "text":
+                label = "Control + Option + " + (m.get("hotkey") or "").upper()
+                items.append(f"   {label}  →  {m['name']}  (text)")
+            else:
+                label = key_labels.get(m["hotkey"], m["hotkey"])
+                items.append(f"   {label}  →  {m['name']}")
         items += [
             None,
             rumps.MenuItem("Quick panel", callback=self.toggle_panel),
@@ -580,13 +687,18 @@ class YapApp(rumps.App):
             ctrl.push_js("yapInit", self._public_config())
         elif action == "save" and isinstance(payload, dict):
             try:
-                valid = {"left", "up", "right", "down"}
                 modes = []
                 for m in payload.get("modes", []):
-                    hk = m.get("hotkey", "left")
+                    is_text = m.get("input") == "text"
+                    hk = (m.get("hotkey") or "").strip().lower()
+                    if is_text:
+                        hotkey = hk if hk in TEXT_HOTKEYS else "r"
+                    else:
+                        hotkey = hk if hk in ARROW_HOTKEYS else "left"
                     modes.append({
                         "name": (m.get("name") or "Button").strip(),
-                        "hotkey": hk if hk in valid else "left",
+                        "input": "text" if is_text else "audio",
+                        "hotkey": hotkey,
                         "prompt": (m.get("prompt") or "").strip(),
                     })
                 if not modes:
@@ -736,7 +848,8 @@ class YapApp(rumps.App):
         modes = self.config.get("modes", [])
         return {
             "mode": mode or self._state,
-            "modes": [{"name": m.get("name", ""), "hotkey": m.get("hotkey", "")} for m in modes],
+            "modes": [{"name": m.get("name", ""), "hotkey": m.get("hotkey", ""),
+                       "input": m.get("input", "audio")} for m in modes],
             "lastYap": self.last_yap or "",
         }
 
@@ -830,15 +943,25 @@ class YapApp(rumps.App):
     def reload_settings(self, _):
         self.config = load_config()
         self._config_mtime = CONFIG_PATH.stat().st_mtime
-        self.hotkey_map = {m["hotkey"]: m for m in self.config["modes"]}
+        self._rebuild_hotkey_maps()
         self._build_menu()
         notify("Yap", "Settings reloaded", "")
+
+    def _rebuild_hotkey_maps(self):
+        """Split modes into the two trigger namespaces: voice modes keyed by
+        arrow ('left'/'up'/…) for the Right Option + arrow hold-to-talk, and text
+        modes keyed by letter ('r'/…) for the Control+Option + letter chord."""
+        modes = self.config.get("modes", [])
+        self.hotkey_map = {m["hotkey"]: m for m in modes
+                           if m.get("input", "audio") != "text"}
+        self.text_hotkey_map = {m["hotkey"]: m for m in modes
+                                if m.get("input", "audio") == "text"}
 
     def _save_config(self):
         with open(CONFIG_PATH, "w") as f:
             json.dump(self.config, f, indent=2)
         self._config_mtime = CONFIG_PATH.stat().st_mtime
-        self.hotkey_map = {m["hotkey"]: m for m in self.config["modes"]}
+        self._rebuild_hotkey_maps()
         self._build_menu()
 
     def _maybe_reload(self):
@@ -851,7 +974,7 @@ class YapApp(rumps.App):
             try:
                 self.config = load_config()
                 self._config_mtime = mtime
-                self.hotkey_map = {m["hotkey"]: m for m in self.config["modes"]}
+                self._rebuild_hotkey_maps()
                 self._build_menu()
             except Exception:
                 pass
@@ -877,10 +1000,25 @@ class YapApp(rumps.App):
         # Show every special key so we can confirm what keys report as.
         if isinstance(key, keyboard.Key):
             log("key pressed:", key)
+        # Track Control/Option for the text-rewrite chord (Control+Option+<letter>).
+        if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+            self.ctrl_down = True
+        elif key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
+            self.alt_down = True
         # Track the activator (Right Option) being held.
         if key == self._activator:
             self.option_down = True
             return
+        # Text-rewrite chord: Control+Option held + a letter bound to a text mode.
+        # Independent of the voice "Right Option + arrow", so the two never clash.
+        if self.ctrl_down and self.alt_down and not self.recording and not self._text_busy:
+            letter = chord_letter(key)
+            if letter is not None:
+                self._maybe_reload()  # honor any settings saved/edited since last time
+                mode = self.text_hotkey_map.get(letter)
+                if mode is not None:
+                    self._trigger_text_mode(mode)
+                    return
         # An arrow tapped WHILE the activator is held starts recording.
         if not self.option_down or self.recording:
             return
@@ -906,7 +1044,12 @@ class YapApp(rumps.App):
             log("ERROR starting microphone:", e)
 
     def _on_release(self, key):
-        # Releasing the activator (Right Option) stops and processes.
+        # Clear the Control/Option chord modifier state.
+        if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+            self.ctrl_down = False
+        elif key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
+            self.alt_down = False
+        # Releasing the activator (Right Option) stops and processes a recording.
         if key != self._activator:
             return
         self.option_down = False
@@ -966,6 +1109,67 @@ class YapApp(rumps.App):
             if not delivered:
                 self._set_state("idle")
 
+    # ----- text modes (selected text → Gemini → paste back) --------------
+
+    def _trigger_text_mode(self, mode):
+        """Start a text-rewrite. Fired from the key listener when the
+        Control+Option+<letter> chord matches a text mode. Mirrors the voice
+        flow: flip to the 'working' icon and do the work off the main thread."""
+        with self._lock:
+            if self._text_busy or self.recording:
+                return
+            self._text_busy = True
+        self._set_state("working")
+        log("TEXT rewrite triggered for mode:", mode["name"])
+        threading.Thread(target=self._process_text, args=(mode,), daemon=True).start()
+
+    def _process_text(self, mode):
+        delivered = False  # set when text was pasted, so we show the "done" check
+        try:
+            # Wait briefly for the user to lift Control/Option, so our simulated
+            # Cmd+C isn't mixed with the still-held chord (which would void it).
+            deadline = time.time() + 1.0
+            while (self.ctrl_down or self.alt_down) and time.time() < deadline:
+                time.sleep(0.02)
+            time.sleep(0.05)  # small settle after the keys come up
+            selected = copy_selection()
+            if not selected.strip():
+                log("text rewrite: nothing selected — doing nothing")
+                notify("Yap", "Nothing selected",
+                       "Select some text first, then press the rewrite shortcut.")
+                return
+            api_key = self.config.get("api_key", "")
+            if not api_key or api_key == DEFAULT_CONFIG["api_key"]:
+                log("no API key set")
+                notify("Yap", "No API key set",
+                       "Open Settings and paste your Gemini API key.")
+                return
+            log("text rewrite: sending", len(selected), "chars to Gemini…")
+            text = rewrite_with_gemini(
+                selected, mode["prompt"], api_key,
+                self.config.get("model", "gemini-2.5-flash"))
+            preview = (text[:80] + "…") if len(text) > 80 else text
+            log("Gemini returned:", repr(preview))
+            if text:
+                paste_text(text)  # replaces the still-selected text in place
+                log("pasted rewritten text.")
+                self.last_yap = text
+                self._set_state("done")  # brief green check, then auto-revert
+                delivered = True
+            else:
+                log("Gemini returned empty text.")
+        except requests.HTTPError as e:
+            body = getattr(e.response, "text", "")[:400]
+            log("Gemini HTTP error:", e, body)
+            notify("Yap", "Gemini busy, try again", "The model was overloaded.")
+        except Exception as e:
+            log_exc("ERROR in _process_text")
+            notify("Yap", "Something went wrong", str(e))
+        finally:
+            self._text_busy = False
+            if not delivered:
+                self._set_state("idle")
+
 
 if __name__ == "__main__":
     if os.environ.get("YAP_SELFTEST") == "1":
@@ -977,6 +1181,16 @@ if __name__ == "__main__":
             log("SELFTEST gemini: returned without raising")
         except Exception as e:
             log("SELFTEST gemini raised:", repr(e))
+        # the text-rewrite path (selected text → Gemini, no audio)
+        try:
+            rewrite_with_gemini("rough text", "Rewrite this.", "dummy-key",
+                                "gemini-2.5-flash", retries=1)
+            log("SELFTEST rewrite: returned without raising")
+        except Exception as e:
+            log("SELFTEST rewrite raised:", repr(e))
+        # the text-mode chord letter lookup (vk 15 = R on macOS)
+        log("SELFTEST chord_letter(vk=15) ->",
+            chord_letter(keyboard.KeyCode(vk=15, char="r")))
         # paste mechanism (pbcopy + pynput Cmd+V)
         try:
             paste_text("yap-selftest"); log("SELFTEST paste OK")
