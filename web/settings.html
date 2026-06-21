@@ -13,6 +13,7 @@
       <nav class="nav">
         <div class="nav-item active" data-pane="buttons"><span class="ico">🎛️</span> Buttons &amp; keys</div>
         <div class="nav-item" data-pane="voice"><span class="ico">🔑</span> Voice &amp; model</div>
+        <div class="nav-item" data-pane="recording"><span class="ico">🎙️</span> Recording</div>
         <div class="nav-item" data-pane="about"><span class="ico">🐟</span> About</div>
       </nav>
       <div class="side-footer">
@@ -65,6 +66,39 @@
           <span class="saved-flash" id="saved2">Saved ✓</span>
           <span class="spacer"></span>
           <button class="btn btn-primary" id="save2">Save</button>
+        </div>
+      </section>
+
+      <!-- RECORDING ----------------------------------------------------- -->
+      <section class="pane" id="pane-recording">
+        <div class="section-title">Recording</div>
+        <div class="section-desc">How voice recording starts and stops, and what Yap
+          shows while you’re talking.</div>
+        <div style="margin-bottom:22px">
+          <label class="field-label" for="trigger-mode">Trigger</label>
+          <select class="select" id="trigger-mode" style="min-width:300px">
+            <option value="hold">Hold to talk — hold ⌥, tap an arrow, release to stop</option>
+            <option value="toggle">Toggle — tap ⌥ + arrow to start, tap ⌥ again to stop</option>
+          </select>
+          <div class="row" style="border:none;padding:8px 0 0">
+            <div class="help">Toggle keeps recording after you let go, so you can talk hands-free.
+              Yap still auto-stops at 7 minutes either way.</div>
+          </div>
+        </div>
+        <div>
+          <label class="field-label" for="recording-indicator">While recording, show</label>
+          <select class="select" id="recording-indicator" style="min-width:300px">
+            <option value="full">Full panel — the whole quick panel pops up</option>
+            <option value="minimal">Minimal — a small “Listening…” chip near the menu bar</option>
+          </select>
+          <div class="row" style="border:none;padding:8px 0 0">
+            <div class="help">Minimal keeps the rest of your screen usable while you keep working in other apps.</div>
+          </div>
+        </div>
+        <div class="toolbar">
+          <span class="saved-flash" id="saved3">Saved ✓</span>
+          <span class="spacer"></span>
+          <button class="btn btn-primary" id="save3">Save</button>
         </div>
       </section>
 

@@ -128,24 +128,31 @@ CHANNELS = 1
 # use a letter (triggered with Control+Option held).
 ARROW_HOTKEYS = {"left", "up", "right", "down"}
 
-# Letter → macOS virtual-key code (Carbon HIToolbox <Events.h>, kVK_ANSI_*).
+# Text-mode key → macOS virtual-key code (Carbon HIToolbox <Events.h>, kVK_ANSI_*).
 # We match the text-mode chord by the key's *virtual-key code*, NOT the character
-# it produces: with Control/Option held, macOS reports odd characters (⌥R → "®"),
-# but the vk of a physical key is stable regardless of modifiers.
+# it produces: with Control/Option held, macOS reports odd characters (⌥/ → "÷",
+# ⌥R → "®"), but the vk of a physical key is stable regardless of modifiers. This
+# is exactly why "/" works as a chord key — keeping Control in the combo means the
+# OS never types "÷", and we match the slash by its vk (44) either way.
 LETTER_VK = {
     "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4,
     "i": 34, "j": 38, "k": 40, "l": 37, "m": 46, "n": 45, "o": 31,
     "p": 35, "q": 12, "r": 15, "s": 1, "t": 17, "u": 32, "v": 9,
     "w": 13, "x": 7, "y": 16, "z": 6,
+    # Non-letter keys (so text-mode hotkeys aren't limited to letters).
+    "/": 44, ";": 41, "'": 39, ",": 43, ".": 47,
+    "[": 33, "]": 30, "-": 27, "=": 24,
 }
 VK_TO_LETTER = {vk: ltr for ltr, vk in LETTER_VK.items()}
 TEXT_HOTKEYS = set(LETTER_VK)
 
 
 def chord_letter(key):
-    """Return the lowercase letter for a pressed pynput key using its macOS
-    virtual-key code (so Control/Option don't change the result), or None if the
-    key isn't a letter."""
+    """Return the key string for a pressed pynput key using its macOS virtual-key
+    code (so Control/Option don't change the result), or None if it isn't one of
+    our text-mode keys. The vk path handles letters AND symbols (e.g. "/"); the
+    char fallback only matters when vk is unavailable, which doesn't happen for
+    these keys on macOS."""
     vk = getattr(key, "vk", None)
     if vk in VK_TO_LETTER:
         return VK_TO_LETTER[vk]
@@ -166,10 +173,20 @@ def _hotkey_valid(mode):
 DEFAULT_CONFIG = {
     "api_key": "PASTE_YOUR_GEMINI_API_KEY_HERE",
     "model": "gemini-2.5-flash",
+    # How a voice recording is triggered:
+    #   "hold"   — hold Right Option, tap an arrow, release to stop (the classic).
+    #   "toggle" — tap Right Option + arrow once to start, tap Right Option again
+    #              to stop. Recording keeps going after you let go.
+    "trigger_mode": "hold",
+    # What's shown while recording a voice mode:
+    #   "full"    — the whole quick panel pops up (current behavior).
+    #   "minimal" — a small "Listening…" chip near the menu bar, so the rest of
+    #               your screen stays usable.
+    "recording_indicator": "full",
     # Bumped whenever the built-in prompts change. On startup, if your config's
     # version is older, the modes are refreshed to these defaults (your API key
     # and model are kept). This means new prompt fixes apply on a simple restart.
-    "config_version": 4,
+    "config_version": 5,
     "modes": [
         {
             "name": "Clean",
@@ -232,10 +249,12 @@ DEFAULT_CONFIG = {
         },
         {
             # A TEXT mode (no recording): select text anywhere, then tap this
-            # letter while holding Control+Option (⌃⌥) to rewrite the selection.
+            # key while holding Control+Option (⌃⌥) to rewrite the selection.
+            # Default is "/" — Control keeps the OS from typing "÷" over your
+            # selection, and we match the slash by its virtual-key code.
             "name": "Rewrite",
             "input": "text",
-            "hotkey": "r",  # Control+Option+R
+            "hotkey": "/",  # Control+Option+/
             "prompt": (
                 "Rewrite the following text in a clean, clear, professional way. "
                 "Keep my meaning and key points. Return only the rewritten text, "
@@ -278,6 +297,16 @@ def load_config():
     with open(CONFIG_PATH) as f:
         cfg = json.load(f)
     needs_save = False
+    # Default (and sanity-check) the top-level behavior settings on every load, so
+    # configs written before these existed gain them, and bad values can't break
+    # the recording state machine or the indicator. (The version bump below only
+    # refreshes `modes`, so these need their own pass.)
+    if cfg.get("trigger_mode") not in ("hold", "toggle"):
+        cfg["trigger_mode"] = "hold"
+        needs_save = True
+    if cfg.get("recording_indicator") not in ("full", "minimal"):
+        cfg["recording_indicator"] = "full"
+        needs_save = True
     # If the built-in prompts have been updated (newer version), refresh the
     # modes to the latest defaults, keeping the user's API key and model.
     if cfg.get("config_version") != DEFAULT_CONFIG["config_version"]:
@@ -299,14 +328,15 @@ def load_config():
 # ---------------------------------------------------------------------------
 
 def _gemini_generate(parts: list, api_key: str, model: str,
-                     retries: int = 5) -> str:
+                     retries: int = 12) -> str:
     """POST a single-turn request (a list of content `parts`) to Gemini and
     return the text result.
 
     Retries automatically on transient "busy" errors (429/500/503), which
     Google returns when the model is temporarily overloaded. Shared by the audio
     (transcribe) and text (rewrite) paths so they use the same key, model,
-    backoff and logging.
+    backoff and logging. 12 attempts with a 2,4,6…s backoff (~2 min worst case)
+    so a recording is never lost just because the model was briefly busy.
     """
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     body = {"contents": [{"parts": parts}]}
@@ -337,7 +367,7 @@ def _gemini_generate(parts: list, api_key: str, model: str,
 
 
 def transcribe_with_gemini(wav_bytes: bytes, prompt: str, api_key: str,
-                           model: str, retries: int = 5) -> str:
+                           model: str, retries: int = 12) -> str:
     """Send WAV audio + an instruction to Gemini and return the text result."""
     audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
     parts = [
@@ -348,7 +378,7 @@ def transcribe_with_gemini(wav_bytes: bytes, prompt: str, api_key: str,
 
 
 def rewrite_with_gemini(text: str, prompt: str, api_key: str,
-                        model: str, retries: int = 5) -> str:
+                        model: str, retries: int = 12) -> str:
     """Send selected text + an instruction to Gemini as a plain-text request
     (no audio) and return the rewritten result. Reuses the same retry/backoff
     and logging as the audio path."""
@@ -465,6 +495,7 @@ class YapApp(rumps.App):
         self._perm_last_snapshot = None
         self._panel = None
         self._panel_autoshown = False
+        self._panel_compact = False    # is the panel currently the minimal chip?
         self._click_installed = False  # menu-bar icon click routing set up yet?
         self._statusmenu = None        # the NSMenu (kept for right-click)
         self._config_mtime = CONFIG_PATH.stat().st_mtime
@@ -475,6 +506,12 @@ class YapApp(rumps.App):
         self.alt_down = False     # is Option/Alt held? (either side; for the chord)
         self._text_busy = False   # a text-rewrite (copy → Gemini → paste) is in flight
         self.active_mode = None
+        # Recording trigger state. _active_trigger_mode is snapshotted at the
+        # moment recording starts (so changing the setting mid-recording can't
+        # strand a live recording); _toggle_armed means "a toggle recording is
+        # live and the next standalone Right Option tap should stop it".
+        self._active_trigger_mode = "hold"
+        self._toggle_armed = False
         self.last_yap = ""        # most recent transcript (shown in the quick panel)
         self._record_start = None  # when the current recording began
         self._state = "idle"        # currently-applied menu-bar state (main thread)
@@ -570,7 +607,11 @@ class YapApp(rumps.App):
                 self._ensure_panel()
                 if self._panel is not None and not self._panel.is_visible():
                     self._panel_autoshown = True
-                    self._show_panel()
+                    # "minimal" → a small Listening chip; "full" → the whole panel.
+                    if self.config.get("recording_indicator", "full") == "minimal":
+                        self._show_panel_compact()
+                    else:
+                        self._show_panel()
             if self._panel is None or not self._panel.is_visible():
                 return
             self._panel.push_js("yapPanel", self._panel_state(name))
@@ -678,6 +719,8 @@ class YapApp(rumps.App):
         return {
             "api_key": self.config.get("api_key", ""),
             "model": self.config.get("model", "gemini-2.5-flash"),
+            "trigger_mode": self.config.get("trigger_mode", "hold"),
+            "recording_indicator": self.config.get("recording_indicator", "full"),
             "modes": [dict(m) for m in self.config.get("modes", [])],
         }
 
@@ -692,7 +735,7 @@ class YapApp(rumps.App):
                     is_text = m.get("input") == "text"
                     hk = (m.get("hotkey") or "").strip().lower()
                     if is_text:
-                        hotkey = hk if hk in TEXT_HOTKEYS else "r"
+                        hotkey = hk if hk in TEXT_HOTKEYS else "/"
                     else:
                         hotkey = hk if hk in ARROW_HOTKEYS else "left"
                     modes.append({
@@ -706,6 +749,10 @@ class YapApp(rumps.App):
                     return
                 self.config["api_key"] = (payload.get("api_key") or "").strip()
                 self.config["model"] = (payload.get("model") or "gemini-2.5-flash").strip()
+                tm = (payload.get("trigger_mode") or "hold").strip()
+                self.config["trigger_mode"] = tm if tm in ("hold", "toggle") else "hold"
+                ri = (payload.get("recording_indicator") or "full").strip()
+                self.config["recording_indicator"] = ri if ri in ("full", "minimal") else "full"
                 self.config["modes"] = modes
                 self._save_config()  # writes config.json, rebuilds menu, refreshes hotkeys
                 log("settings saved from web UI")
@@ -851,15 +898,33 @@ class YapApp(rumps.App):
             "modes": [{"name": m.get("name", ""), "hotkey": m.get("hotkey", ""),
                        "input": m.get("input", "audio")} for m in modes],
             "lastYap": self.last_yap or "",
+            # The minimal "Listening…" chip vs. the full panel, and which trigger
+            # mode is live (so the hint can say "release" vs "tap to stop").
+            "compact": bool(self._panel_compact),
+            "trigger": self._active_trigger_mode,
         }
 
     def _show_panel(self):
         if self._panel is None:
             return
-        # Size to fit the content, then anchor under the status item.
+        # The full panel: size to fit the content, then anchor under the status
+        # item. Always full-size (manual opens force this), so clear the chip flag.
+        self._panel_compact = False
         rows = len(self.config.get("modes", []))
         height = 232 + rows * 58 + (132 if self.last_yap else 0)
         self._panel.resize_to(344, height)
+        self._panel.push_js("yapPanel", self._panel_state())
+        self._panel.show_at(self._panel_anchor())
+
+    def _show_panel_compact(self):
+        """The minimal recording indicator: a small "Listening…" chip anchored by
+        the menu-bar icon, so the rest of the screen stays usable. Reuses the same
+        non-activating panel window (just resized small); the web side hides the
+        panel chrome when state.compact is true."""
+        if self._panel is None:
+            return
+        self._panel_compact = True
+        self._panel.resize_to(184, 96)
         self._panel.push_js("yapPanel", self._panel_state())
         self._panel.show_at(self._panel_anchor())
 
@@ -1008,6 +1073,12 @@ class YapApp(rumps.App):
         # Track the activator (Right Option) being held.
         if key == self._activator:
             self.option_down = True
+            # TOGGLE mode: a standalone Right Option tap while a toggle recording
+            # is live stops it. _toggle_armed guards this so the START gesture's
+            # own Option-down (recording still False) never trips it.
+            if self._toggle_armed and self.recording:
+                self._toggle_armed = False
+                self._finish_recording()
             return
         # Text-rewrite chord: Control+Option held + a letter bound to a text mode.
         # Independent of the voice "Right Option + arrow", so the two never clash.
@@ -1031,15 +1102,25 @@ class YapApp(rumps.App):
             return
         self.recording = True
         self.active_mode = mode
+        # Snapshot the trigger mode at start, so changing the setting mid-recording
+        # can't strand a live recording. _maybe_reload() above already applied any
+        # just-saved setting. Arming for toggle happens on the first Option release.
+        self._active_trigger_mode = self.config.get("trigger_mode", "hold")
+        self._toggle_armed = False
         try:
             self.recorder.start()
             self._record_start = time.time()
             self._set_state("recording")  # _tick shows the live countdown
+            tail = ("— tap Right Option again to stop"
+                    if self._active_trigger_mode == "toggle"
+                    else "— keep holding Right Option, release it to finish")
             log("RECORDING started for mode:", mode["name"],
-                "— keep holding Right Option, release it to finish")
+                "trigger:", self._active_trigger_mode, tail)
         except Exception as e:
             self.recording = False
             self.active_mode = None
+            self._active_trigger_mode = "hold"
+            self._toggle_armed = False
             self._set_state("idle")
             log("ERROR starting microphone:", e)
 
@@ -1049,10 +1130,16 @@ class YapApp(rumps.App):
             self.ctrl_down = False
         elif key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
             self.alt_down = False
-        # Releasing the activator (Right Option) stops and processes a recording.
+        # Releasing the activator (Right Option) stops and processes a recording…
         if key != self._activator:
             return
         self.option_down = False
+        # …in HOLD mode. In TOGGLE mode, the first release after starting does NOT
+        # stop — instead it arms the next standalone Option tap to stop (handled in
+        # _on_press). Stray releases (no live recording) fall through harmlessly.
+        if self.recording and self._active_trigger_mode == "toggle":
+            self._toggle_armed = True
+            return
         self._finish_recording()
 
     def _finish_recording(self):
@@ -1062,6 +1149,11 @@ class YapApp(rumps.App):
             if not self.recording:
                 return
             self.recording = False
+            # Reset toggle state here so EVERY stop path — hold release, the
+            # toggle-stop tap, and the 7-minute auto-stop in _tick — stays
+            # consistent (and a later stray Option tap can't re-fire).
+            self._toggle_armed = False
+            self._active_trigger_mode = "hold"
         self._record_start = None
         wav_bytes = self.recorder.stop()
         log("RECORDING stopped, audio bytes:", len(wav_bytes))

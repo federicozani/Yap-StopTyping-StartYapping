@@ -13,9 +13,11 @@ var HOTKEYS = [
   { v: "right", label: "⌥ + →" },
   { v: "down",  label: "⌥ + ↓" }
 ];
-// Text modes (e.g. Rewrite) fire on Control+Option + a letter — separate from
-// the voice "Right Option + arrow" combos, so the two can't conflict.
-var TEXT_HOTKEYS = ["r", "e", "t", "y", "u", "i", "o", "p", "j", "k", "l"].map(
+// Text modes (e.g. Rewrite) fire on Control+Option + a key — separate from the
+// voice "Right Option + arrow" combos, so the two can't conflict. Non-letter
+// keys like "/" work too (Control keeps the OS from typing a "÷" character).
+var TEXT_HOTKEYS = ["/", ";", "'", ",", ".", "[", "]", "-", "=",
+                    "r", "e", "t", "y", "u", "i", "o", "p", "j", "k", "l"].map(
   function (c) { return { v: c, label: "⌃⌥ + " + c.toUpperCase() }; }
 );
 var DEFAULT_REWRITE_PROMPT =
@@ -29,7 +31,8 @@ var MODEL_OPTIONS = [
 ];
 var MODE_EMOJI = ["🧹", "📝", "🎙️", "🌍", "✨", "💬", "📌", "⚡"];
 
-var CONFIG = { api_key: "", model: "gemini-2.5-flash", modes: [] };
+var CONFIG = { api_key: "", model: "gemini-2.5-flash",
+  trigger_mode: "hold", recording_indicator: "full", modes: [] };
 
 /* =========================== SETTINGS =============================== */
 
@@ -123,6 +126,13 @@ function fillVoice() {
   });
 }
 
+function fillRecording() {
+  var t = document.getElementById("trigger-mode");
+  if (t) t.value = (CONFIG.trigger_mode === "toggle") ? "toggle" : "hold";
+  var r = document.getElementById("recording-indicator");
+  if (r) r.value = (CONFIG.recording_indicator === "minimal") ? "minimal" : "full";
+}
+
 function banner(msg) {
   var b = document.getElementById("banner");
   if (!b) return;
@@ -134,6 +144,11 @@ function collectAndValidate() {
   // pull api/model from the voice pane
   CONFIG.api_key = document.getElementById("api").value.trim();
   CONFIG.model = document.getElementById("model").value || "gemini-2.5-flash";
+  // pull the recording-behavior settings (null-guarded — same form)
+  var t = document.getElementById("trigger-mode");
+  if (t) CONFIG.trigger_mode = (t.value === "toggle") ? "toggle" : "hold";
+  var r = document.getElementById("recording-indicator");
+  if (r) CONFIG.recording_indicator = (r.value === "minimal") ? "minimal" : "full";
   if (!CONFIG.modes.length) { banner("Add at least one button."); return null; }
   var used = {};
   for (var i = 0; i < CONFIG.modes.length; i++) {
@@ -168,7 +183,7 @@ function doSave(flashId) {
 window.yapInit = function (cfg) {
   CONFIG = cfg || CONFIG;
   if (!CONFIG.modes) CONFIG.modes = [];
-  if (isSettings()) { renderModes(); fillVoice(); }
+  if (isSettings()) { renderModes(); fillVoice(); fillRecording(); }
 };
 window.yapSaved = function (ok, msg) { if (!ok && msg) banner(msg); };
 
@@ -199,6 +214,8 @@ function initSettings() {
   });
   document.getElementById("save").addEventListener("click", function () { doSave("saved"); });
   document.getElementById("save2").addEventListener("click", function () { doSave("saved2"); });
+  var save3 = document.getElementById("save3");
+  if (save3) save3.addEventListener("click", function () { doSave("saved3"); });
   var eye = document.getElementById("eye");
   eye.addEventListener("click", function () {
     var f = document.getElementById("api");
@@ -293,13 +310,16 @@ function initPanel() {
   send("ready");
 }
 window.yapPanel = function (state) {
-  // state: { mode: 'idle'|'recording'|'working'|'done', modes:[...], lastYap:'' , countdown:'' }
+  // state: { mode:'idle'|'recording'|'working'|'done', modes:[...], lastYap:'',
+  //          compact:bool, trigger:'hold'|'toggle' }
   var live = document.getElementById("live");
   var wave = document.getElementById("wave");
   var status = document.getElementById("status-text");
   var hint = document.getElementById("status-hint");
   var last = document.getElementById("last-yap");
   if (!live) return;
+  // Minimal "Listening…" chip vs. the full panel (CSS hides the chrome).
+  document.body.classList.toggle("minimal", !!state.compact);
   var m = state.mode || "idle";
   live.dataset.mode = m;
   if (status) {
@@ -308,7 +328,9 @@ window.yapPanel = function (state) {
       : m === "done" ? "Pasted ✓" : "Ready to yap";
   }
   if (hint) {
-    hint.textContent = m === "recording" ? "Release Right Option when you’re done"
+    var stopHint = (state.trigger === "toggle")
+      ? "Tap Right Option to stop" : "Release Right Option when you’re done";
+    hint.textContent = m === "recording" ? stopHint
       : m === "working" ? "Sending to Gemini" : "Hold ⌥ and tap an arrow";
   }
   if (wave) wave.classList.toggle("animate", m === "recording" || m === "working");

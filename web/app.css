@@ -353,3 +353,16 @@ textarea.prompt:focus { border-color: var(--brand-purple); box-shadow: 0 0 0 3px
   font-family: var(--font-ui); font-size: 11.5px; font-weight: 600; color: var(--ink-550);
   padding: 3px 8px; border-radius: 7px; }
 .p-foot-quit:hover { background: #FFF0F2; color: var(--rec-dot); }
+
+/* ---- minimal recording indicator (the "Listening…" chip) ------------- */
+/* Same panel window, just collapsed to the wave + label. Python resizes the
+   window to ~184x96 and sets state.compact, which adds body.minimal. */
+body.minimal .panel-body, body.minimal .panel { width: 184px; }
+body.minimal .p-header,
+body.minimal #rows,
+body.minimal #last-yap,
+body.minimal .p-footer,
+body.minimal #status-hint { display: none; }
+body.minimal #live { padding: 16px 16px 14px; border-bottom: none; }
+body.minimal #wave { height: 32px; margin-bottom: 8px; }
+body.minimal #status-text { font-size: 15px; }
