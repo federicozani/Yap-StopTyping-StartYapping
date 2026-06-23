@@ -193,8 +193,21 @@ def _hotkey_valid(mode):
 
 
 DEFAULT_CONFIG = {
-    "api_key": "PASTE_YOUR_GEMINI_API_KEY_HERE",
-    "model": "gemini-2.5-flash",
+    # Which AI provider Yap sends recordings/text to: "gemini" or "openai".
+    "provider": "gemini",
+    # One key + model per provider, so you can switch without re-pasting. Only
+    # audio-capable models belong here (all Gemini models; OpenAI's
+    # gpt-4o-*-audio-preview chat models) because voice is a single native call.
+    "providers": {
+        "gemini": {
+            "api_key": "PASTE_YOUR_GEMINI_API_KEY_HERE",
+            "model": "gemini-2.5-flash",
+        },
+        "openai": {
+            "api_key": "",
+            "model": "gpt-4o-audio-preview",
+        },
+    },
     # How a voice recording is triggered:
     #   "hold"   — hold Right Option, tap an arrow, release to stop (the classic).
     #   "toggle" — tap Right Option + arrow once to start, tap Right Option again
@@ -206,9 +219,9 @@ DEFAULT_CONFIG = {
     #               your screen stays usable.
     "recording_indicator": "full",
     # Bumped whenever the built-in prompts change. On startup, if your config's
-    # version is older, the modes are refreshed to these defaults (your API key
-    # and model are kept). This means new prompt fixes apply on a simple restart.
-    "config_version": 6,
+    # version is older, the modes are refreshed to these defaults (your provider,
+    # API keys and model picks are kept). New prompt fixes apply on a restart.
+    "config_version": 7,
     "modes": [
         {
             "name": "Clean",
@@ -329,8 +342,42 @@ def load_config():
     if cfg.get("recording_indicator") not in ("full", "minimal"):
         cfg["recording_indicator"] = "full"
         needs_save = True
+    # Provider migration: older configs stored a single flat api_key + model
+    # (Gemini-only). Fold those into the new per-provider structure so nothing
+    # is lost, keep Gemini as the default, and drop the old flat keys. This is
+    # structural (runs whenever `providers` is absent), independent of the
+    # version bump below.
+    if "providers" not in cfg:
+        old_key = cfg.pop("api_key", "") or DEFAULT_CONFIG["providers"]["gemini"]["api_key"]
+        old_model = cfg.pop("model", "") or DEFAULT_CONFIG["providers"]["gemini"]["model"]
+        cfg["providers"] = {
+            "gemini": {"api_key": old_key, "model": old_model},
+            "openai": dict(DEFAULT_CONFIG["providers"]["openai"]),
+        }
+        cfg.setdefault("provider", "gemini")
+        needs_save = True
+    # Sanity-check the provider selection and make sure both provider slots
+    # exist with their fields, so a hand-edited or partial config can't wedge
+    # the picker. (Like the trigger_mode pass above; the version bump only
+    # touches `modes`.)
+    if cfg.get("provider") not in ("gemini", "openai"):
+        cfg["provider"] = "gemini"
+        needs_save = True
+    providers = cfg.setdefault("providers", {})
+    for name in ("gemini", "openai"):
+        slot = providers.get(name)
+        if not isinstance(slot, dict):
+            slot = {}
+            providers[name] = slot
+            needs_save = True
+        if "api_key" not in slot:
+            slot["api_key"] = DEFAULT_CONFIG["providers"][name]["api_key"]
+            needs_save = True
+        if not slot.get("model"):
+            slot["model"] = DEFAULT_CONFIG["providers"][name]["model"]
+            needs_save = True
     # If the built-in prompts have been updated (newer version), refresh the
-    # modes to the latest defaults, keeping the user's API key and model.
+    # modes to the latest defaults, keeping the user's provider, keys and models.
     if cfg.get("config_version") != DEFAULT_CONFIG["config_version"]:
         cfg["modes"] = [dict(m) for m in DEFAULT_CONFIG["modes"]]
         cfg["config_version"] = DEFAULT_CONFIG["config_version"]
@@ -346,66 +393,120 @@ def load_config():
 
 
 # ---------------------------------------------------------------------------
-# Gemini: send audio + a prompt, get back finished text.
+# LLM providers: send audio (or text) + a prompt, get back finished text.
+#
+# Yap supports two providers, both reached with ONE native request that takes
+# the recording and returns finished text — no separate transcription step:
+#   - Google Gemini  (any multimodal Gemini model; audio via inline_data)
+#   - OpenAI         (the gpt-4o-*-audio-preview chat models; audio via the
+#                     chat `input_audio` content part)
+# A shared retry/backoff core is used by both so a recording is never lost just
+# because the model was briefly busy.
 # ---------------------------------------------------------------------------
 
-def _gemini_generate(parts: list, api_key: str, model: str,
-                     retries: int = 12) -> str:
-    """POST a single-turn request (a list of content `parts`) to Gemini and
-    return the text result.
+def _post_with_retry(url: str, headers: dict, body: dict, parse_fn,
+                     retries: int = 12, label: str = "LLM") -> str:
+    """POST `body` to `url` and return the text pulled out by `parse_fn(json)`.
 
     Retries automatically on transient "busy" errors (429/500/503), which
-    Google returns when the model is temporarily overloaded. Shared by the audio
-    (transcribe) and text (rewrite) paths so they use the same key, model,
-    backoff and logging. 12 attempts with a 2,4,6…s backoff (~2 min worst case)
-    so a recording is never lost just because the model was briefly busy.
+    providers return when the model is temporarily overloaded. Shared by the
+    audio (transcribe) and text (rewrite) paths and by both providers so they
+    use the same backoff and logging. 12 attempts with a 2,4,6…s backoff
+    (~2 min worst case) so a recording is never lost to a brief blip.
     """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    body = {"contents": [{"parts": parts}]}
     last_resp = None
     for attempt in range(retries):
-        resp = requests.post(
-            url,
-            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-            json=body,
-            timeout=60,
-        )
+        resp = requests.post(url, headers=headers, json=body, timeout=60)
         if resp.status_code in (429, 500, 503):
             last_resp = resp
             if attempt < retries - 1:  # don't wait after the final attempt
                 wait = 2 * (attempt + 1)
-                log(f"Gemini busy ({resp.status_code}); retrying in {wait}s "
+                log(f"{label} busy ({resp.status_code}); retrying in {wait}s "
                     f"(attempt {attempt + 1}/{retries})…")
                 time.sleep(wait)
             continue
         resp.raise_for_status()
-        data = resp.json()
-        # Pull the text out of the first candidate's first part.
-        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        return parse_fn(resp.json())
     # Ran out of retries: surface the last busy error.
     if last_resp is not None:
         last_resp.raise_for_status()
     return ""
 
 
-def transcribe_with_gemini(wav_bytes: bytes, prompt: str, api_key: str,
-                           model: str, retries: int = 12) -> str:
-    """Send WAV audio + an instruction to Gemini and return the text result."""
+def _gemini_call(parts: list, api_key: str, model: str,
+                 retries: int = 12) -> str:
+    """One Gemini generateContent call. `parts` is the list of content parts
+    (text and, for audio, an inline_data part)."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
+    body = {"contents": [{"parts": parts}]}
+    # Pull the text out of the first candidate's first part.
+    return _post_with_retry(
+        url, headers, body,
+        lambda d: d["candidates"][0]["content"]["parts"][0]["text"].strip(),
+        retries, label="Gemini")
+
+
+def _openai_call(messages: list, api_key: str, model: str,
+                 retries: int = 12, audio: bool = False) -> str:
+    """One OpenAI chat-completions call. `messages` is the chat messages list;
+    set `audio=True` when a message carries an input_audio part, so the model
+    is told to answer with text."""
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    body = {"model": model, "messages": messages}
+    if audio:
+        body["modalities"] = ["text"]
+    return _post_with_retry(
+        url, headers, body,
+        lambda d: (d["choices"][0]["message"]["content"] or "").strip(),
+        retries, label="OpenAI")
+
+
+def transcribe(wav_bytes: bytes, prompt: str, provider: str, api_key: str,
+               model: str, retries: int = 12) -> str:
+    """Send WAV audio + an instruction to the chosen provider in a single
+    native call and return the finished text. Only audio-capable models work
+    here (all Gemini models; OpenAI's gpt-4o-*-audio-preview chat models)."""
     audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
+    if provider == "openai":
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "input_audio",
+             "input_audio": {"data": audio_b64, "format": "wav"}},
+        ]}]
+        return _openai_call(messages, api_key, model, retries, audio=True)
+    # Gemini (default for any unknown provider).
     parts = [
         {"text": prompt},
         {"inline_data": {"mime_type": "audio/wav", "data": audio_b64}},
     ]
-    return _gemini_generate(parts, api_key, model, retries)
+    return _gemini_call(parts, api_key, model, retries)
 
 
-def rewrite_with_gemini(text: str, prompt: str, api_key: str,
-                        model: str, retries: int = 12) -> str:
-    """Send selected text + an instruction to Gemini as a plain-text request
-    (no audio) and return the rewritten result. Reuses the same retry/backoff
-    and logging as the audio path."""
-    parts = [{"text": prompt.rstrip() + "\n\n" + text}]
-    return _gemini_generate(parts, api_key, model, retries)
+def rewrite(text: str, prompt: str, provider: str, api_key: str,
+            model: str, retries: int = 12) -> str:
+    """Send selected text + an instruction to the chosen provider as a plain
+    text request (no audio) and return the rewritten result. Reuses the same
+    retry/backoff and logging as the audio path."""
+    combined = prompt.rstrip() + "\n\n" + text
+    if provider == "openai":
+        messages = [{"role": "user", "content": combined}]
+        return _openai_call(messages, api_key, model, retries)
+    # Gemini (default for any unknown provider).
+    return _gemini_call([{"text": combined}], api_key, model, retries)
+
+
+def _active_provider(config: dict):
+    """Resolve the currently selected provider and its key/model from config.
+    Returns (provider, api_key, model). Falls back to Gemini for any unknown
+    or malformed provider so a bad config can never wedge the app."""
+    provider = config.get("provider", "gemini")
+    if provider not in ("gemini", "openai"):
+        provider = "gemini"
+    pcfg = (config.get("providers") or {}).get(provider) or {}
+    default_model = DEFAULT_CONFIG["providers"][provider]["model"]
+    return provider, pcfg.get("api_key", ""), pcfg.get("model") or default_model
 
 
 # ---------------------------------------------------------------------------
@@ -688,7 +789,7 @@ class YapApp(rumps.App):
             None,
             rumps.MenuItem("Quick panel", callback=self.toggle_panel),
             rumps.MenuItem("Settings…", callback=self.edit_settings),
-            rumps.MenuItem("Set Gemini API key…", callback=self.set_api_key),
+            rumps.MenuItem("Set API key…", callback=self.set_api_key),
             rumps.MenuItem("Open config file…", callback=self.open_config_file),
             rumps.MenuItem("Restore default prompts", callback=self.restore_defaults),
             rumps.MenuItem("Reload settings", callback=self.reload_settings),
@@ -699,12 +800,19 @@ class YapApp(rumps.App):
         self.menu = items
 
     def set_api_key(self, _):
-        """Quick dialog to paste a Gemini API key. Works even in the bundled app."""
-        current = self.config.get("api_key", "")
-        prefill = "" if current == DEFAULT_CONFIG["api_key"] else current
+        """Quick dialog to paste the API key for the currently selected provider.
+        Works even in the bundled app. (Use Settings to switch providers/models.)"""
+        provider, current, _model = _active_provider(self.config)
+        prefill = "" if (not current or current.startswith("PASTE_YOUR")) else current
+        if provider == "openai":
+            title = "OpenAI API Key"
+            message = "Paste your OpenAI API key (from platform.openai.com):"
+        else:
+            title = "Gemini API Key"
+            message = "Paste your free Gemini API key (get one at aistudio.google.com):"
         window = rumps.Window(
-            title="Gemini API Key",
-            message="Paste your free Gemini API key (get one at aistudio.google.com):",
+            title=title,
+            message=message,
             default_text=prefill,
             ok="Save",
             cancel="Cancel",
@@ -714,7 +822,7 @@ class YapApp(rumps.App):
         if response.clicked:
             key = response.text.strip()
             if key:
-                self.config["api_key"] = key
+                self.config.setdefault("providers", {}).setdefault(provider, {})["api_key"] = key
                 self._save_config()
                 notify("Yap", "API key saved", "")
 
@@ -761,9 +869,17 @@ class YapApp(rumps.App):
 
     def _public_config(self):
         """The slice of config the web UI needs (and is allowed to write back)."""
+        providers = self.config.get("providers") or {}
         return {
-            "api_key": self.config.get("api_key", ""),
-            "model": self.config.get("model", "gemini-2.5-flash"),
+            "provider": self.config.get("provider", "gemini"),
+            "providers": {
+                name: {
+                    "api_key": (providers.get(name) or {}).get("api_key", ""),
+                    "model": (providers.get(name) or {}).get(
+                        "model", DEFAULT_CONFIG["providers"][name]["model"]),
+                }
+                for name in ("gemini", "openai")
+            },
             "trigger_mode": self.config.get("trigger_mode", "hold"),
             "recording_indicator": self.config.get("recording_indicator", "full"),
             "modes": [dict(m) for m in self.config.get("modes", [])],
@@ -790,8 +906,16 @@ class YapApp(rumps.App):
                 if not modes:
                     ctrl.push_js("yapSaved", False)
                     return
-                self.config["api_key"] = (payload.get("api_key") or "").strip()
-                self.config["model"] = (payload.get("model") or "gemini-2.5-flash").strip()
+                prov = (payload.get("provider") or "gemini").strip()
+                self.config["provider"] = prov if prov in ("gemini", "openai") else "gemini"
+                in_providers = payload.get("providers") or {}
+                providers = self.config.setdefault("providers", {})
+                for name in ("gemini", "openai"):
+                    slot = providers.setdefault(name, {})
+                    incoming = in_providers.get(name) or {}
+                    slot["api_key"] = (incoming.get("api_key") or "").strip()
+                    slot["model"] = ((incoming.get("model") or "").strip()
+                                     or DEFAULT_CONFIG["providers"][name]["model"])
                 tm = (payload.get("trigger_mode") or "hold").strip()
                 self.config["trigger_mode"] = tm if tm in ("hold", "toggle") else "hold"
                 ri = (payload.get("recording_indicator") or "full").strip()
@@ -1283,18 +1407,17 @@ class YapApp(rumps.App):
             if len(wav_bytes) < SAMPLE_RATE * 2 * 0.3:
                 log("audio too short, skipping (did the mic record anything?)")
                 return
-            api_key = self.config.get("api_key", "")
-            if not api_key or api_key == DEFAULT_CONFIG["api_key"]:
-                log("no API key set")
-                notify("Yap", "No API key set",
-                       "Open Edit settings and paste your Gemini API key.")
+            provider, api_key, model = _active_provider(self.config)
+            if not api_key or api_key.startswith("PASTE_YOUR"):
+                name = "OpenAI" if provider == "openai" else "Gemini"
+                log("no API key set for", provider)
+                notify("Yap", f"No {name} API key set",
+                       f"Open Settings and paste your {name} API key.")
                 return
-            log("sending to Gemini…")
-            text = transcribe_with_gemini(
-                wav_bytes, mode["prompt"], api_key, self.config.get("model", "gemini-2.5-flash")
-            )
+            log(f"sending to {provider} ({model})…")
+            text = transcribe(wav_bytes, mode["prompt"], provider, api_key, model)
             preview = (text[:80] + "…") if len(text) > 80 else text
-            log("Gemini returned:", repr(preview))
+            log("model returned:", repr(preview))
             if text:
                 paste_text(text)
                 log("pasted.")
@@ -1302,11 +1425,11 @@ class YapApp(rumps.App):
                 self._set_state("done")  # brief green check, then auto-revert to idle
                 delivered = True
             else:
-                log("Gemini returned empty text.")
+                log("model returned empty text.")
         except requests.HTTPError as e:
             body = getattr(e.response, "text", "")[:400]
-            log("Gemini HTTP error:", e, body)
-            notify("Yap", "Gemini busy, try again", "The model was overloaded.")
+            log("model HTTP error:", e, body)
+            notify("Yap", "Model busy, try again", "The model was overloaded.")
         except Exception as e:
             log_exc("ERROR in _process")
             notify("Yap", "Something went wrong", str(e))
@@ -1314,7 +1437,7 @@ class YapApp(rumps.App):
             if not delivered:
                 self._set_state("idle")
 
-    # ----- text modes (selected text → Gemini → paste back) --------------
+    # ----- text modes (selected text → provider → paste back) ------------
 
     def _trigger_text_mode(self, mode):
         """Start a text-rewrite. Fired from the key listener when the
@@ -1343,18 +1466,17 @@ class YapApp(rumps.App):
                 notify("Yap", "Nothing selected",
                        "Select some text first, then press the rewrite shortcut.")
                 return
-            api_key = self.config.get("api_key", "")
-            if not api_key or api_key == DEFAULT_CONFIG["api_key"]:
-                log("no API key set")
-                notify("Yap", "No API key set",
-                       "Open Settings and paste your Gemini API key.")
+            provider, api_key, model = _active_provider(self.config)
+            if not api_key or api_key.startswith("PASTE_YOUR"):
+                name = "OpenAI" if provider == "openai" else "Gemini"
+                log("no API key set for", provider)
+                notify("Yap", f"No {name} API key set",
+                       f"Open Settings and paste your {name} API key.")
                 return
-            log("text rewrite: sending", len(selected), "chars to Gemini…")
-            text = rewrite_with_gemini(
-                selected, mode["prompt"], api_key,
-                self.config.get("model", "gemini-2.5-flash"))
+            log(f"text rewrite: sending {len(selected)} chars to {provider} ({model})…")
+            text = rewrite(selected, mode["prompt"], provider, api_key, model)
             preview = (text[:80] + "…") if len(text) > 80 else text
-            log("Gemini returned:", repr(preview))
+            log("model returned:", repr(preview))
             if text:
                 paste_text(text)  # replaces the still-selected text in place
                 log("pasted rewritten text.")
@@ -1362,11 +1484,11 @@ class YapApp(rumps.App):
                 self._set_state("done")  # brief green check, then auto-revert
                 delivered = True
             else:
-                log("Gemini returned empty text.")
+                log("model returned empty text.")
         except requests.HTTPError as e:
             body = getattr(e.response, "text", "")[:400]
-            log("Gemini HTTP error:", e, body)
-            notify("Yap", "Gemini busy, try again", "The model was overloaded.")
+            log("model HTTP error:", e, body)
+            notify("Yap", "Model busy, try again", "The model was overloaded.")
         except Exception as e:
             log_exc("ERROR in _process_text")
             notify("Yap", "Something went wrong", str(e))
@@ -1379,20 +1501,21 @@ class YapApp(rumps.App):
 if __name__ == "__main__":
     if os.environ.get("YAP_SELFTEST") == "1":
         log("SELFTEST start. frozen=%r" % getattr(sys, "frozen", False))
-        # the exact Gemini request mechanism (dummy key -> expect HTTP 400/403,
-        # which proves requests + TLS work; an SSL/conn error would prove they don't)
-        try:
-            transcribe_with_gemini(b"RIFF....", "hi", "dummy-key", "gemini-2.5-flash", retries=1)
-            log("SELFTEST gemini: returned without raising")
-        except Exception as e:
-            log("SELFTEST gemini raised:", repr(e))
-        # the text-rewrite path (selected text → Gemini, no audio)
-        try:
-            rewrite_with_gemini("rough text", "Rewrite this.", "dummy-key",
-                                "gemini-2.5-flash", retries=1)
-            log("SELFTEST rewrite: returned without raising")
-        except Exception as e:
-            log("SELFTEST rewrite raised:", repr(e))
+        # Exercise BOTH providers' audio + text request paths with a dummy key
+        # (expect an HTTP/auth error, which proves requests + TLS + the request
+        # shape work; an SSL/conn error would prove they don't).
+        selftest_models = {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-audio-preview"}
+        for prov, mdl in selftest_models.items():
+            try:
+                transcribe(b"RIFF....", "hi", prov, "dummy-key", mdl, retries=1)
+                log(f"SELFTEST {prov} transcribe: returned without raising")
+            except Exception as e:
+                log(f"SELFTEST {prov} transcribe raised:", repr(e))
+            try:
+                rewrite("rough text", "Rewrite this.", prov, "dummy-key", mdl, retries=1)
+                log(f"SELFTEST {prov} rewrite: returned without raising")
+            except Exception as e:
+                log(f"SELFTEST {prov} rewrite raised:", repr(e))
         # the text-mode chord letter lookup (vk 15 = R on macOS)
         log("SELFTEST chord_letter(vk=15) ->",
             chord_letter(keyboard.KeyCode(vk=15, char="r")))

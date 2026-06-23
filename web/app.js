@@ -27,14 +27,39 @@ var DEFAULT_REWRITE_PROMPT =
   "meaning and key points. Return only the rewritten text, with no preamble " +
   "or commentary. Do not use em dashes; use commas, colons, or separate " +
   "sentences instead.";
-var MODEL_OPTIONS = [
-  "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
-  "gemini-1.5-flash", "gemini-1.5-pro"
-];
+// Audio-capable models per provider (voice is a single native call). The
+// free-text box in Settings lets you type any other model id.
+var PROVIDER_MODELS = {
+  gemini: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
+           "gemini-1.5-flash", "gemini-1.5-pro"],
+  openai: ["gpt-4o-audio-preview", "gpt-4o-mini-audio-preview"]
+};
+var PROVIDER_DEFAULT_MODEL = { gemini: "gemini-2.5-flash", openai: "gpt-4o-audio-preview" };
 var MODE_EMOJI = ["🧹", "📝", "🎙️", "🌍", "✨", "💬", "📌", "⚡"];
 
-var CONFIG = { api_key: "", model: "gemini-2.5-flash",
+var CONFIG = { provider: "gemini",
+  providers: {
+    gemini: { api_key: "", model: "gemini-2.5-flash" },
+    openai: { api_key: "", model: "gpt-4o-audio-preview" }
+  },
   trigger_mode: "hold", recording_indicator: "full", modes: [] };
+
+// Make sure CONFIG always has the per-provider shape, folding in any old flat
+// api_key/model (belt-and-suspenders; the backend already migrates the file).
+function normalizeConfig() {
+  if (!CONFIG.providers) CONFIG.providers = {};
+  ["gemini", "openai"].forEach(function (p) {
+    if (!CONFIG.providers[p]) CONFIG.providers[p] = {};
+    if (typeof CONFIG.providers[p].api_key !== "string") CONFIG.providers[p].api_key = "";
+    if (!CONFIG.providers[p].model) CONFIG.providers[p].model = PROVIDER_DEFAULT_MODEL[p];
+  });
+  if (CONFIG.api_key || CONFIG.model) {  // legacy flat fields → gemini slot
+    if (CONFIG.api_key && !CONFIG.providers.gemini.api_key) CONFIG.providers.gemini.api_key = CONFIG.api_key;
+    if (CONFIG.model) CONFIG.providers.gemini.model = CONFIG.model;
+    delete CONFIG.api_key; delete CONFIG.model;
+  }
+  if (CONFIG.provider !== "gemini" && CONFIG.provider !== "openai") CONFIG.provider = "gemini";
+}
 
 /* =========================== SETTINGS =============================== */
 
@@ -109,18 +134,35 @@ function renderModes() {
   });
 }
 
-function fillVoice() {
-  document.getElementById("api").value =
-    (CONFIG.api_key && CONFIG.api_key.indexOf("PASTE_YOUR") === 0) ? "" : (CONFIG.api_key || "");
+function maskedKey(v) {  // hide the "PASTE_YOUR…" placeholder; show real keys
+  return (v && v.indexOf("PASTE_YOUR") === 0) ? "" : (v || "");
+}
+
+// Fill the model dropdown with the given provider's audio-capable models. A
+// stored model that isn't one of them goes into the free-text box instead.
+function fillModelSelect(provider) {
+  var stored = (CONFIG.providers[provider] || {}).model || "";
+  var list = PROVIDER_MODELS[provider] || [];
+  var inList = list.indexOf(stored) !== -1;
   var sel = document.getElementById("model");
   sel.innerHTML = "";
-  var opts = MODEL_OPTIONS.slice();
-  if (CONFIG.model && opts.indexOf(CONFIG.model) === -1) opts.unshift(CONFIG.model);
-  opts.forEach(function (mo) {
+  sel.setAttribute("data-provider", provider);
+  list.forEach(function (mo) {
     var o = el("option"); o.value = mo; o.textContent = mo;
-    if (mo === CONFIG.model) o.selected = true;
+    if (inList && mo === stored) o.selected = true;
     sel.appendChild(o);
   });
+  var custom = document.getElementById("model-custom");
+  if (custom) custom.value = inList ? "" : stored;
+}
+
+function fillVoice() {
+  var prov = (CONFIG.provider === "openai") ? "openai" : "gemini";
+  var ps = document.getElementById("provider");
+  if (ps) ps.value = prov;
+  document.getElementById("api-gemini").value = maskedKey(CONFIG.providers.gemini.api_key);
+  document.getElementById("api-openai").value = maskedKey(CONFIG.providers.openai.api_key);
+  fillModelSelect(prov);
 }
 
 function fillRecording() {
@@ -138,9 +180,15 @@ function banner(msg) {
 }
 
 function collectAndValidate() {
-  // pull api/model from the voice pane
-  CONFIG.api_key = document.getElementById("api").value.trim();
-  CONFIG.model = document.getElementById("model").value || "gemini-2.5-flash";
+  // pull provider, both keys, and the selected model from the provider pane
+  var ps = document.getElementById("provider");
+  var prov = (ps && ps.value === "openai") ? "openai" : "gemini";
+  CONFIG.provider = prov;
+  CONFIG.providers.gemini.api_key = document.getElementById("api-gemini").value.trim();
+  CONFIG.providers.openai.api_key = document.getElementById("api-openai").value.trim();
+  var custom = (document.getElementById("model-custom").value || "").trim();
+  CONFIG.providers[prov].model =
+    custom || document.getElementById("model").value || PROVIDER_DEFAULT_MODEL[prov];
   // pull the recording-behavior settings (null-guarded — same form)
   var t = document.getElementById("trigger-mode");
   if (t) CONFIG.trigger_mode = (t.value === "toggle") ? "toggle" : "hold";
@@ -180,6 +228,7 @@ function doSave(flashId) {
 window.yapInit = function (cfg) {
   CONFIG = cfg || CONFIG;
   if (!CONFIG.modes) CONFIG.modes = [];
+  normalizeConfig();
   if (isSettings()) { renderModes(); fillVoice(); fillRecording(); }
 };
 window.yapSaved = function (ok, msg) { if (!ok && msg) banner(msg); };
@@ -213,10 +262,24 @@ function initSettings() {
   document.getElementById("save2").addEventListener("click", function () { doSave("saved2"); });
   var save3 = document.getElementById("save3");
   if (save3) save3.addEventListener("click", function () { doSave("saved3"); });
-  var eye = document.getElementById("eye");
-  eye.addEventListener("click", function () {
-    var f = document.getElementById("api");
-    f.type = (f.type === "password") ? "text" : "password";
+  // When the provider changes, remember the model showing for the old provider,
+  // then repopulate the model list for the newly-selected one.
+  var prov = document.getElementById("provider");
+  if (prov) prov.addEventListener("change", function () {
+    var sel = document.getElementById("model");
+    var old = sel.getAttribute("data-provider");
+    if (old && CONFIG.providers[old]) {
+      var custom = (document.getElementById("model-custom").value || "").trim();
+      CONFIG.providers[old].model = custom || sel.value || PROVIDER_DEFAULT_MODEL[old];
+    }
+    fillModelSelect(prov.value === "openai" ? "openai" : "gemini");
+  });
+  // Each eye button toggles the visibility of its own key field (data-eye=id).
+  document.querySelectorAll(".eye").forEach(function (eye) {
+    eye.addEventListener("click", function () {
+      var f = document.getElementById(eye.getAttribute("data-eye"));
+      if (f) f.type = (f.type === "password") ? "text" : "password";
+    });
   });
   send("ready");
 }

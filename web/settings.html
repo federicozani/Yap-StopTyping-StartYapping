@@ -12,7 +12,7 @@
     <aside class="sidebar">
       <nav class="nav">
         <div class="nav-item active" data-pane="buttons"><span class="ico">🎛️</span> Buttons &amp; keys</div>
-        <div class="nav-item" data-pane="voice"><span class="ico">🔑</span> Voice &amp; model</div>
+        <div class="nav-item" data-pane="voice"><span class="ico">🔑</span> Provider &amp; model</div>
         <div class="nav-item" data-pane="recording"><span class="ico">🎙️</span> Recording</div>
         <div class="nav-item" data-pane="about"><span class="ico">🐟</span> About</div>
       </nav>
@@ -46,22 +46,47 @@
 
       <!-- VOICE & MODEL ------------------------------------------------- -->
       <section class="pane" id="pane-voice">
-        <div class="section-title">Voice &amp; model</div>
-        <div class="section-desc">Your Gemini API key and the model Yap uses to transcribe.</div>
+        <div class="section-title">Provider &amp; model</div>
+        <div class="section-desc">Pick your AI provider and model, and paste the matching API key.
+          Voice sends your recording straight to the model in one call, so only audio-capable
+          models are listed. Both keys are stored, so you can switch any time.</div>
         <div style="margin-bottom:22px">
-          <label class="field-label" for="api">Gemini API key</label>
+          <label class="field-label" for="provider">Provider</label>
+          <select class="select" id="provider" style="min-width:240px">
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </div>
+        <div style="margin-bottom:22px">
+          <label class="field-label" for="model">Model</label>
+          <select class="select" id="model" style="min-width:240px"></select>
+          <input class="field" id="model-custom" autocomplete="off" spellcheck="false"
+                 style="margin-top:8px" placeholder="…or type any model id">
+          <div class="row" style="border:none;padding:8px 0 0">
+            <div class="help">Only audio-capable models work for voice. Leave the box empty to use the dropdown.</div>
+          </div>
+        </div>
+        <div style="margin-bottom:22px">
+          <label class="field-label" for="api-gemini">Gemini API key</label>
           <div class="secure-wrap">
-            <input class="field" id="api" type="password" autocomplete="off" spellcheck="false"
+            <input class="field" id="api-gemini" type="password" autocomplete="off" spellcheck="false"
                    placeholder="Paste your free key from aistudio.google.com">
-            <button class="eye" id="eye" title="Show / hide">👁</button>
+            <button class="eye" data-eye="api-gemini" title="Show / hide">👁</button>
           </div>
           <div class="row" style="border:none;padding:8px 0 0">
-            <div class="help">Get a free key at aistudio.google.com — it’s stored only on this Mac.</div>
+            <div class="help">Free key at aistudio.google.com — stored only on this Mac.</div>
           </div>
         </div>
         <div>
-          <label class="field-label" for="model">Model</label>
-          <select class="select" id="model" style="min-width:240px"></select>
+          <label class="field-label" for="api-openai">OpenAI API key</label>
+          <div class="secure-wrap">
+            <input class="field" id="api-openai" type="password" autocomplete="off" spellcheck="false"
+                   placeholder="Paste your key from platform.openai.com">
+            <button class="eye" data-eye="api-openai" title="Show / hide">👁</button>
+          </div>
+          <div class="row" style="border:none;padding:8px 0 0">
+            <div class="help">Key from platform.openai.com — stored only on this Mac.</div>
+          </div>
         </div>
         <div class="toolbar">
           <span class="saved-flash" id="saved2">Saved ✓</span>
