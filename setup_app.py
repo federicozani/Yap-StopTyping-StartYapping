@@ -51,7 +51,9 @@ def _tree_data_files(folder):
     if not os.path.isdir(folder):
         return entries
     for dirpath, _dirs, files in os.walk(folder):
-        real = [f for f in files if not f.startswith(".")]
+        # Never ship a config.json — the user's API key lives only in
+        # ~/.yap/config.json and must never be baked into the shared bundle.
+        real = [f for f in files if not f.startswith(".") and f != "config.json"]
         if not real:
             continue
         dest = os.path.relpath(dirpath, ".")

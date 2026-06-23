@@ -561,6 +561,15 @@ def _active_provider(config: dict):
     return provider, pcfg.get("api_key", ""), pcfg.get("model") or default_model
 
 
+def _has_usable_key(config: dict) -> bool:
+    """True only if the selected provider has a REAL API key (non-empty and not
+    the bundled `PASTE_YOUR…` placeholder). Drives the onboarding trigger so the
+    welcome flow always appears when there is no working key in ~/.yap — it can
+    never be skipped because of a leftover/placeholder config."""
+    _provider, key, _model = _active_provider(config)
+    return bool(key) and not key.startswith("PASTE_YOUR")
+
+
 # ---------------------------------------------------------------------------
 # Audio recording: collect mic frames while a key is held.
 # ---------------------------------------------------------------------------
@@ -676,12 +685,16 @@ class YapApp(rumps.App):
         idle_icon, idle_tmpl = ICON_STATES["idle"]
         super().__init__("", icon=idle_icon, template=idle_tmpl, quit_button=None)
         self.config = load_config()
-        # Show the welcome/onboarding flow until it's been completed (a fresh
-        # config starts with onboarding_complete=False; existing configs are
-        # marked True on load). This is robust to the permissions quit-and-reopen:
-        # once the user has passed the API-key step the flag is set, so reopening
-        # lands straight in a normal working state.
-        self._needs_onboarding = not self.config.get("onboarding_complete", False)
+        # Show the welcome/onboarding flow on first run OR whenever there is no
+        # usable API key in ~/.yap (e.g. after `rm -rf ~/.yap`, or a config that
+        # was never finished). Keying off the actual stored key — not just the
+        # onboarding_complete flag — means onboarding can never be skipped because
+        # of a leftover/placeholder config, and a fresh launch always starts at
+        # the beginning. (The flag still suppresses re-showing once a real key is
+        # in place and the flow was completed, e.g. across the IM quit-and-reopen.)
+        self._needs_onboarding = (
+            not self.config.get("onboarding_complete", False)
+            or not _has_usable_key(self.config))
         self._settings_ctrl = None
         self._onboarding_ctrl = None
         # Onboarding permission walk-through state (Microphone → Input
