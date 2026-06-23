@@ -93,6 +93,16 @@ function textHotkeySelect(value) {
   return s;
 }
 
+// Look up a shipped default mode by its stable key (sent by Python in
+// CONFIG.default_modes). Returns null for user-added modes (no key).
+function defaultModeByKey(key) {
+  var list = (CONFIG && CONFIG.default_modes) || [];
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].key === key) return list[i];
+  }
+  return null;
+}
+
 function renderModes() {
   var wrap = document.getElementById("modes");
   wrap.innerHTML = "";
@@ -123,6 +133,17 @@ function renderModes() {
     pwrap.appendChild(ta);
 
     var foot = el("div", "mode-card-foot");
+    // For a shipped default mode, offer a one-click restore of its name+prompt
+    // (other modes and edits are untouched). User-added modes have no key.
+    var def = m.key ? defaultModeByKey(m.key) : null;
+    if (def) {
+      var reset = el("button", "btn-reset", "Reset to default");
+      reset.title = "Restore this button’s name and prompt to the shipped default";
+      reset.addEventListener("click", function () {
+        m.name = def.name; m.prompt = def.prompt; renderModes();
+      });
+      foot.appendChild(reset);
+    }
     var rm = el("button", "btn-remove", "Remove");
     rm.addEventListener("click", function () {
       CONFIG.modes.splice(i, 1); renderModes();
@@ -288,13 +309,14 @@ function initSettings() {
 
 function initOnboarding() {
   var steps = Array.prototype.slice.call(document.querySelectorAll(".step"));
-  var dotsWrap = document.getElementById("dots");
   var idx = 0;
   function paintDots() {
-    dotsWrap.innerHTML = "";
-    steps.forEach(function (_, i) {
-      var d = el("span", "dot" + (i === idx ? " on" : ""));
-      dotsWrap.appendChild(d);
+    // Every step carries its own .dots strip; keep them all in sync.
+    document.querySelectorAll(".dots").forEach(function (wrap) {
+      wrap.innerHTML = "";
+      steps.forEach(function (_, i) {
+        wrap.appendChild(el("span", "dot" + (i === idx ? " on" : "")));
+      });
     });
   }
   var permRequested = false;
@@ -309,6 +331,23 @@ function initOnboarding() {
       send("permReady");
     }
   }
+
+  // ----- API-key step: provider / model selects -----
+  var provSel = document.getElementById("onb-provider");
+  var modelSel = document.getElementById("onb-model");
+  function fillOnbModels(provider) {
+    var list = PROVIDER_MODELS[provider] || [];
+    modelSel.innerHTML = "";
+    list.forEach(function (mo) {
+      var o = el("option"); o.value = mo; o.textContent = mo; modelSel.appendChild(o);
+    });
+    modelSel.value = PROVIDER_DEFAULT_MODEL[provider] || list[0] || "";
+  }
+  if (provSel && modelSel) {
+    fillOnbModels(provSel.value);
+    provSel.addEventListener("change", function () { fillOnbModels(provSel.value); });
+  }
+
   document.querySelectorAll("[data-next]").forEach(function (b) {
     b.addEventListener("click", function () { show(idx + 1); });
   });
@@ -322,17 +361,40 @@ function initOnboarding() {
     b.addEventListener("click", function () { send("openSettings"); });
   });
   document.querySelectorAll("[data-getkey]").forEach(function (b) {
-    b.addEventListener("click", function () { send("getApiKey"); });
+    b.addEventListener("click", function (e) { e.preventDefault(); send("getApiKey"); });
   });
-  // Permissions step: per-row fallback buttons (shown only once denied).
-  document.querySelectorAll("[data-fix]").forEach(function (b) {
-    var row = b.closest(".perm-row");
-    b.addEventListener("click", function () {
-      send("requestPermission", { which: row.getAttribute("data-perm") });
+  // Eye toggles reveal/hide the key field.
+  document.querySelectorAll(".eye").forEach(function (eye) {
+    eye.addEventListener("click", function () {
+      var f = document.getElementById(eye.getAttribute("data-eye"));
+      if (f) f.type = (f.type === "password") ? "text" : "password";
     });
   });
-  document.querySelectorAll("[data-fix-accessibility]").forEach(function (b) {
-    b.addEventListener("click", function () { send("openAccessibilitySettings"); });
+  // "Continue" on the key step: require a key, store it, then advance.
+  var keyNext = document.getElementById("onb-key-next");
+  if (keyNext) keyNext.addEventListener("click", function () {
+    var keyField = document.getElementById("onb-key");
+    var err = document.getElementById("onb-key-error");
+    var key = (keyField.value || "").trim();
+    if (!key) { if (err) err.hidden = false; keyField.focus(); return; }
+    if (err) err.hidden = true;
+    send("saveOnboardingKey", {
+      provider: provSel ? provSel.value : "gemini",
+      model: modelSel ? modelSel.value : "",
+      api_key: key
+    });
+    show(idx + 1);
+  });
+  // Permissions step: each "Open Settings" opens the EXACT privacy pane.
+  document.querySelectorAll("[data-pane]").forEach(function (b) {
+    var row = b.closest(".perm-row");
+    b.addEventListener("click", function () {
+      send("openPermissionPane", { which: row.getAttribute("data-perm") });
+    });
+  });
+  // Quit & Reopen — Input Monitoring only registers after a relaunch.
+  document.querySelectorAll("[data-relaunch]").forEach(function (b) {
+    b.addEventListener("click", function () { send("relaunchApp"); });
   });
   show(0);
 }
@@ -344,14 +406,14 @@ window.yapPerms = function (state) {
     var which = row.getAttribute("data-perm");
     var st = state[which] || "unknown";
     var pill = row.querySelector("[data-pill]");
-    var fix = row.querySelector("[data-fix]");  // mic / input-monitoring retry
+    var fix = row.querySelector("[data-pane]");  // exact-pane "Open Settings"
     row.dataset.status = st;
     if (pill) {
       pill.textContent = st === "granted" ? "✓ Granted"
         : st === "denied" ? "Needs access" : "Waiting…";
     }
-    // Show the per-row retry/Settings button only once we've been denied.
-    if (fix) fix.hidden = (st !== "denied");
+    // Hide the Settings shortcut once the permission is granted.
+    if (fix) fix.hidden = (st === "granted");
   });
 };
 

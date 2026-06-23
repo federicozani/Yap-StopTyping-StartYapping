@@ -26,6 +26,7 @@ from AppKit import (
     NSPopUpMenuWindowLevel, NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp,
     NSEventTypeRightMouseUp, NSEventModifierFlagControl,
+    NSMenu, NSMenuItem,
 )
 from Foundation import NSObject, NSURL, NSMakeRect
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserContentController
@@ -33,6 +34,9 @@ from WebKit import WKWebView, WKWebViewConfiguration, WKUserContentController
 # Keep strong references so windows/controllers aren't garbage-collected while
 # they're on screen (PyObjC won't retain them for us).
 _LIVE = set()
+
+# Whether the standard Edit menu (copy/paste/…) has been installed yet.
+_EDIT_MENU_INSTALLED = False
 
 
 def _to_py(obj):
@@ -97,10 +101,51 @@ class YapWebWindow(NSObject):
         self.window.close()
 
 
+def _install_edit_menu():
+    """Give the app an Edit menu wired to the standard responder actions, so
+    Cmd+C/V/X/A/Z work in the web-view text fields.
+
+    Yap is a menu-bar (LSUIElement) rumps app with no application menu, so the
+    WKWebView's inputs receive no standard editing commands. The menu bar isn't
+    visible for an accessory app, but its key equivalents are still routed to
+    the key window's first responder (the web view), which is all we need.
+    Idempotent: only the first call builds the menu."""
+    global _EDIT_MENU_INSTALLED
+    if _EDIT_MENU_INSTALLED:
+        return
+    main = NSMenu.alloc().init()
+
+    edit_item = NSMenuItem.alloc().init()
+    main.addItem_(edit_item)
+    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+    edit_item.setSubmenu_(edit_menu)
+
+    def add(title, action, key, shift=False):
+        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            title, action, key)
+        if shift:
+            from AppKit import NSEventModifierFlagCommand, NSEventModifierFlagShift
+            item.setKeyEquivalentModifierMask_(
+                NSEventModifierFlagCommand | NSEventModifierFlagShift)
+        edit_menu.addItem_(item)
+
+    add("Undo", "undo:", "z")
+    add("Redo", "redo:", "z", shift=True)
+    edit_menu.addItem_(NSMenuItem.separatorItem())
+    add("Cut", "cut:", "x")
+    add("Copy", "copy:", "c")
+    add("Paste", "paste:", "v")
+    add("Select All", "selectAll:", "a")
+
+    NSApp().setMainMenu_(main)
+    _EDIT_MENU_INSTALLED = True
+
+
 def open_window(html_path, web_root, title, size=(720, 600),
                 resizable=True, min_size=(620, 460),
                 on_message=None, on_close=None):
     """Create and show a web-view window. Must be called on the main thread."""
+    _install_edit_menu()
     ctrl = YapWebWindow.alloc().init()
     ctrl._on_message = on_message
     ctrl._on_close = on_close

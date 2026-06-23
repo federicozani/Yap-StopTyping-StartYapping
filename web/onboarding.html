@@ -25,44 +25,34 @@
       </div>
     </section>
 
-    <!-- STEP 2: PERMISSIONS ------------------------------------------- -->
+    <!-- STEP 2: API KEY ----------------------------------------------- -->
     <section class="step" data-step="2">
-      <h2 class="step-title">Three quick permissions.</h2>
-      <p class="step-intro">macOS will ask for these one at a time — just click
-        <b>Allow</b> on each. This is all the setup there is.</p>
-      <div class="perm-list" id="perm-list">
-        <div class="perm-row" data-perm="microphone">
-          <div class="perm-ic">🎙️</div>
-          <div class="perm-info">
-            <div class="perm-name">Microphone</div>
-            <div class="perm-desc">so Yap can hear you</div>
-          </div>
-          <span class="perm-pill" data-pill>Checking…</span>
-          <button class="btn-ghost perm-fix" data-fix hidden>Open Settings</button>
+      <h2 class="step-title">First, your API key.</h2>
+      <p class="step-intro">Yap turns your voice into text with an AI model. Pick a provider,
+        choose a model, and paste your key. <b>Google Gemini is free</b> — no card needed.</p>
+      <div class="key-form">
+        <label class="field-label" for="onb-provider">Provider</label>
+        <select class="select" id="onb-provider">
+          <option value="gemini">Google Gemini (free)</option>
+          <option value="openai">OpenAI</option>
+        </select>
+
+        <label class="field-label" for="onb-model" style="margin-top:14px">Model</label>
+        <select class="select" id="onb-model"></select>
+
+        <label class="field-label" for="onb-key" style="margin-top:14px">API key</label>
+        <div class="secure-wrap">
+          <input class="field" id="onb-key" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="Paste your key here">
+          <button class="eye" data-eye="onb-key" title="Show / hide">👁</button>
         </div>
-        <div class="perm-row" data-perm="inputMonitoring">
-          <div class="perm-ic">⌨️</div>
-          <div class="perm-info">
-            <div class="perm-name">Input Monitoring</div>
-            <div class="perm-desc">to detect the hold-to-talk hotkey</div>
-          </div>
-          <span class="perm-pill" data-pill>Checking…</span>
-          <button class="btn-ghost perm-fix" data-fix hidden>Open Settings</button>
-        </div>
-        <div class="perm-row" data-perm="accessibility">
-          <div class="perm-ic">📋</div>
-          <div class="perm-info">
-            <div class="perm-name">Accessibility</div>
-            <div class="perm-desc">to paste the result into whatever app you’re using</div>
-          </div>
-          <span class="perm-pill" data-pill>Checking…</span>
-          <button class="btn-ghost perm-fix" data-fix-accessibility>Open Settings</button>
-        </div>
+        <a class="key-link" id="onb-getkey" href="#" data-getkey>Create a free Google Gemini key →</a>
+        <div class="onb-error" id="onb-key-error" hidden>Please paste your API key to continue.</div>
       </div>
       <div class="onb-foot">
         <button class="btn-ghost" data-back>← Back</button>
         <div class="dots"></div>
-        <button class="btn btn-primary" data-next>Next →</button>
+        <button class="btn btn-primary" id="onb-key-next">Continue →</button>
       </div>
     </section>
 
@@ -101,17 +91,18 @@
     <section class="step" data-step="4">
       <h2 class="step-title">Every button is just a prompt.</h2>
       <p class="step-intro">Each key runs an instruction you can edit in Settings. Change the words,
-        change what Yap does — translate, draft an email, make a to-do list.</p>
+        change what Yap does — translate, draft an email, make a to-do list. Tweaked one and want
+        the original back? Each button has a <b>Reset to default</b> in Settings.</p>
       <div class="prompt-demo">
         <div class="pd-head">
-          <div class="pd-ic">🌍</div>
-          <div><div class="pd-name">Translate to English</div>
-            <div class="pd-sub">Custom button · ⌥ + →</div></div>
+          <div class="pd-ic">✉️</div>
+          <div><div class="pd-name">Draft an email</div>
+            <div class="pd-sub">Email button · ⌥ + →</div></div>
         </div>
         <div class="pd-body">
           <span class="prompt-eyebrow">Prompt</span>
-          <div class="pd-text">Transcribe the audio and translate the result into
-            <mark>English</mark>. Return only the translated text.</div>
+          <div class="pd-text">Turn what I say into a clear, well-structured
+            <mark>email</mark>, ready to send, with a subject line and a sign-off.</div>
         </div>
       </div>
       <div class="onb-foot">
@@ -121,25 +112,48 @@
       </div>
     </section>
 
-    <!-- STEP 5: API KEY ----------------------------------------------- -->
+    <!-- STEP 5: PERMISSIONS (LAST) ------------------------------------ -->
     <section class="step" data-step="5">
-      <h2 class="step-title">One last thing: your API key.</h2>
-      <p class="step-intro">Yap uses Google Gemini to turn your voice into text, so it
-        needs an API key to work. <b>Gemini 2.5 Flash</b> is the default — and it’s
-        <b>free</b>.</p>
-      <div class="key-card">
-        <div class="key-ic">🔑</div>
-        <div class="key-info">
-          <div class="key-name">Get a free Gemini API key</div>
-          <div class="key-desc">Create one in Google AI Studio (free, no card needed),
-            then paste it into Settings → Voice &amp; model.</div>
+      <h2 class="step-title">Last step: three permissions.</h2>
+      <p class="step-intro">macOS will ask for these one at a time — click <b>Allow</b> on each.
+        If a prompt doesn’t appear, use <b>Open Settings</b> to switch it on by hand.</p>
+      <div class="perm-list" id="perm-list">
+        <div class="perm-row" data-perm="microphone">
+          <div class="perm-ic">🎙️</div>
+          <div class="perm-info">
+            <div class="perm-name">Microphone</div>
+            <div class="perm-desc">so Yap can hear you</div>
+          </div>
+          <span class="perm-pill" data-pill>Checking…</span>
+          <button class="btn-ghost perm-fix" data-pane>Open Settings</button>
         </div>
-        <button class="btn btn-primary" data-getkey>Get a free API key →</button>
+        <div class="perm-row" data-perm="accessibility">
+          <div class="perm-ic">📋</div>
+          <div class="perm-info">
+            <div class="perm-name">Accessibility</div>
+            <div class="perm-desc">to paste the result into whatever app you’re using</div>
+          </div>
+          <span class="perm-pill" data-pill>Checking…</span>
+          <button class="btn-ghost perm-fix" data-pane>Open Settings</button>
+        </div>
+        <div class="perm-row" data-perm="inputMonitoring">
+          <div class="perm-ic">⌨️</div>
+          <div class="perm-info">
+            <div class="perm-name">Input Monitoring <span class="perm-badge">needs restart</span></div>
+            <div class="perm-desc">to detect the hold-to-talk hotkey. After enabling this one,
+              quit and reopen Yap so it takes effect.</div>
+          </div>
+          <span class="perm-pill" data-pill>Checking…</span>
+          <button class="btn-ghost perm-fix" data-pane>Open Settings</button>
+        </div>
+      </div>
+      <div class="onb-note">
+        Turned on Input Monitoring? <b>Quit and reopen Yap</b> so it registers.
+        <button class="btn-ghost onb-relaunch" data-relaunch>Quit &amp; Reopen Yap</button>
       </div>
       <div class="onb-foot">
         <button class="btn-ghost" data-back>← Back</button>
         <div class="dots"></div>
-        <button class="btn btn-primary" data-settings style="margin-right:8px">Open Settings</button>
         <button class="btn btn-primary" data-finish>Start yapping 🎉</button>
       </div>
     </section>

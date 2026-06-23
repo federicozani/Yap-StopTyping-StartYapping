@@ -95,8 +95,9 @@ OLD_CONFIG_DIR = Path.home() / ".parla"
 OLD_CONFIG_PATH = OLD_CONFIG_DIR / "config.json"
 OLD_LOG_PATH = OLD_CONFIG_DIR / "parla.log"
 
-# Where onboarding sends users to create a free Gemini API key.
-AISTUDIO_URL = "https://aistudio.google.com/"
+# Where onboarding sends users to create a free Gemini API key (the key page,
+# not the Studio home, so the "create key" button is right there).
+AISTUDIO_URL = "https://aistudio.google.com/apikey"
 
 
 def resource_path(*parts):
@@ -218,12 +219,16 @@ DEFAULT_CONFIG = {
     #   "minimal" — a small "Listening…" chip near the menu bar, so the rest of
     #               your screen stays usable.
     "recording_indicator": "full",
+    # False until the user finishes the welcome/onboarding flow (or saves a key
+    # in it). Existing configs are treated as already-onboarded on load.
+    "onboarding_complete": False,
     # Bumped whenever the built-in prompts change. On startup, if your config's
     # version is older, the modes are refreshed to these defaults (your provider,
     # API keys and model picks are kept). New prompt fixes apply on a restart.
-    "config_version": 7,
+    "config_version": 8,
     "modes": [
         {
+            "key": "clean",
             "name": "Clean",
             "input": "audio",
             "hotkey": "left",
@@ -238,6 +243,7 @@ DEFAULT_CONFIG = {
             ),
         },
         {
+            "key": "summary",
             "name": "Summary",
             "input": "audio",
             "hotkey": "up",
@@ -263,16 +269,31 @@ DEFAULT_CONFIG = {
             ),
         },
         {
-            "name": "Raw",
+            "key": "email",
+            "name": "Email",
             "input": "audio",
             "hotkey": "right",
             "prompt": (
-                "Transcribe the following audio word for word in the same "
-                "language it is spoken. Return ONLY the transcription, with no "
-                "edits and nothing else."
+                "You are my email-drafting assistant. I will speak, giving the "
+                "context and the points I want to make. Turn what I say into a "
+                "clear, well-structured email, ready to send, in the same "
+                "language I speak. Write a short, relevant subject line labeled "
+                "\"Subject:\". Open with an appropriate greeting (use the "
+                "recipient's name if I mention it, otherwise a neutral greeting). "
+                "Write the body in clear, well-organized paragraphs, using short "
+                "bullet points only if I list several items. Cover everything I "
+                "asked for, in a professional but friendly tone unless I specify "
+                "a different one. Close with a suitable sign-off, using my name if "
+                "I say it, otherwise leave a \"[Your name]\" placeholder. Do not "
+                "invent facts I did not give you, do not include a transcript or "
+                "any commentary, and return only the finished email. Do not use "
+                "em dashes; use commas, colons, or separate sentences instead. If "
+                "I state a tone, recipient, length, or language in the recording, "
+                "follow that."
             ),
         },
         {
+            "key": "custom",
             "name": "Custom",
             "input": "audio",
             "hotkey": "down",
@@ -287,6 +308,7 @@ DEFAULT_CONFIG = {
             # arrow while holding Right Command + Right Option (⌘⌥) to rewrite the
             # selection in place. Same arrows as voice; the extra Command is what
             # makes it rewrite instead of record.
+            "key": "rewrite",
             "name": "Rewrite",
             "input": "text",
             "hotkey": "left",  # Right ⌘ + Right ⌥ + ←
@@ -341,6 +363,13 @@ def load_config():
         needs_save = True
     if cfg.get("recording_indicator") not in ("full", "minimal"):
         cfg["recording_indicator"] = "full"
+        needs_save = True
+    # An existing config means the user has already used Yap, so treat them as
+    # already-onboarded (only a brand-new config, created above with the default
+    # False, should trigger the welcome flow). This runs only for configs written
+    # before the flag existed.
+    if "onboarding_complete" not in cfg:
+        cfg["onboarding_complete"] = True
         needs_save = True
     # Provider migration: older configs stored a single flat api_key + model
     # (Gemini-only). Fold those into the new per-provider structure so nothing
@@ -623,10 +652,13 @@ class YapApp(rumps.App):
     def __init__(self):
         idle_icon, idle_tmpl = ICON_STATES["idle"]
         super().__init__("", icon=idle_icon, template=idle_tmpl, quit_button=None)
-        # First run = neither a Yap nor an old Parla config existed before now.
-        existed = CONFIG_PATH.exists() or OLD_CONFIG_PATH.exists()
         self.config = load_config()
-        self._first_run = not existed
+        # Show the welcome/onboarding flow until it's been completed (a fresh
+        # config starts with onboarding_complete=False; existing configs are
+        # marked True on load). This is robust to the permissions quit-and-reopen:
+        # once the user has passed the API-key step the flag is set, so reopening
+        # lands straight in a normal working state.
+        self._needs_onboarding = not self.config.get("onboarding_complete", False)
         self._settings_ctrl = None
         self._onboarding_ctrl = None
         # Onboarding permission walk-through state (Microphone → Input
@@ -708,10 +740,11 @@ class YapApp(rumps.App):
         # panel (left-click) and keep the full menu on right/Control-click.
         if not self._click_installed:
             self._install_icon_click()
-        # On the very first run, greet the user with the onboarding window once
-        # the app's run loop is up (doing it here keeps it on the main thread).
-        if self._first_run:
-            self._first_run = False
+        # Until onboarding is complete, greet the user with the welcome window
+        # once the app's run loop is up (doing it here keeps it on the main
+        # thread). Cleared immediately so it only opens once per launch.
+        if self._needs_onboarding:
+            self._needs_onboarding = False
             try:
                 self.show_onboarding(None)
             except Exception:
@@ -883,6 +916,12 @@ class YapApp(rumps.App):
             "trigger_mode": self.config.get("trigger_mode", "hold"),
             "recording_indicator": self.config.get("recording_indicator", "full"),
             "modes": [dict(m) for m in self.config.get("modes", [])],
+            # The shipped defaults, so the Settings UI can offer a per-mode
+            # "Reset to default" (matched by the stable `key`).
+            "default_modes": [
+                {"key": m["key"], "name": m["name"], "prompt": m["prompt"]}
+                for m in DEFAULT_CONFIG["modes"]
+            ],
         }
 
     def _on_settings_message(self, action, payload, ctrl):
@@ -897,12 +936,17 @@ class YapApp(rumps.App):
                     hk = (m.get("hotkey") or "").strip().lower()
                     # Both voice and text modes are bound to arrows now.
                     hotkey = hk if hk in ARROW_HOTKEYS else "left"
-                    modes.append({
+                    entry = {
                         "name": (m.get("name") or "Button").strip(),
                         "input": "text" if is_text else "audio",
                         "hotkey": hotkey,
                         "prompt": (m.get("prompt") or "").strip(),
-                    })
+                    }
+                    # Preserve the stable default-mode key (powers per-mode
+                    # "Reset to default"); user-added modes have none.
+                    if m.get("key"):
+                        entry["key"] = m.get("key")
+                    modes.append(entry)
                 if not modes:
                     ctrl.push_js("yapSaved", False)
                     return
@@ -928,9 +972,57 @@ class YapApp(rumps.App):
                 log_exc("failed to save settings from web UI")
                 ctrl.eval_js("window.yapSaved && window.yapSaved(false);")
 
+    def _mark_onboarded(self):
+        """Persist that the welcome flow has been completed, so it doesn't
+        reappear (notably after the Input Monitoring quit-and-reopen)."""
+        if not self.config.get("onboarding_complete"):
+            self.config["onboarding_complete"] = True
+            self._save_config()
+
+    def _relaunch_app(self):
+        """Quit and reopen Yap. Enabling Input Monitoring for an unsigned app
+        only takes effect after a relaunch, so the onboarding offers this as the
+        final action. When running from the bundle we relaunch it; from source we
+        can only quit (the dev restarts manually)."""
+        self._mark_onboarded()  # so the reopened app lands in a normal state
+        try:
+            if getattr(sys, "frozen", False):
+                bundle = Path(sys.executable).resolve().parents[2]  # …/Yap.app
+                # `open -n` launches a fresh instance after this one exits.
+                subprocess.Popen(["open", "-n", str(bundle)])
+                log(f"relaunching {bundle}")
+            else:
+                log("relaunch requested from source; quitting only")
+        except Exception:
+            log_exc("relaunch failed; quitting anyway")
+        rumps.quit_application()
+
     def _on_onboarding_message(self, action, payload, ctrl):
         if action == "finishOnboarding":
+            self._mark_onboarded()
             ctrl.close_window()
+        elif action == "saveOnboardingKey" and isinstance(payload, dict):
+            # The API-key step: store the chosen provider + model + key, then
+            # mark onboarding complete (the user has passed the key step before
+            # permissions, so a later quit-and-reopen launches normally).
+            try:
+                prov = (payload.get("provider") or "gemini").strip()
+                prov = prov if prov in ("gemini", "openai") else "gemini"
+                model = (payload.get("model") or "").strip() \
+                    or DEFAULT_CONFIG["providers"][prov]["model"]
+                key = (payload.get("api_key") or "").strip()
+                providers = self.config.setdefault("providers", {})
+                slot = providers.setdefault(prov, {})
+                slot["api_key"] = key
+                slot["model"] = model
+                self.config["provider"] = prov
+                self.config["onboarding_complete"] = True
+                self._save_config()
+                log(f"onboarding: saved {prov} key + model {model}")
+                ctrl.push_js("yapKeySaved", True)
+            except Exception:
+                log_exc("failed to save onboarding API key")
+                ctrl.push_js("yapKeySaved", False)
         elif action == "openSettings":
             self.edit_settings(None)
         elif action == "permReady":
@@ -939,12 +1031,15 @@ class YapApp(rumps.App):
             self._perm_start_sequence()
         elif action == "requestPermission" and isinstance(payload, dict):
             self._perm_request_one(payload.get("which"))
-        elif action == "openAccessibilitySettings":
+        elif action == "openPermissionPane" and isinstance(payload, dict):
+            # Open the EXACT System Settings privacy pane for this permission.
             try:
                 import permissions
-                permissions.open_accessibility_settings()
+                permissions.open_pane(payload.get("which"))
             except Exception:
-                log_exc("failed to open Accessibility settings")
+                log_exc("failed to open permission pane")
+        elif action == "relaunchApp":
+            self._relaunch_app()
         elif action == "getApiKey":
             # Open Google AI Studio so the user can create a free Gemini API key.
             # Opened via the browser (not the web view, which has no nav delegate).
@@ -968,14 +1063,16 @@ class YapApp(rumps.App):
             self._onboarding_ctrl.push_js("yapPerms", snap)
 
     def _perm_start_sequence(self):
-        """Push current status, then queue the prompts for the missing ones in
-        order: Microphone → Input Monitoring → Accessibility."""
+        """Push current status, then queue the prompts for the missing ones.
+        Input Monitoring is LAST because granting it to an unsigned app only
+        takes effect after a quit-and-reopen, so it's the final step the user
+        finishes with."""
         snap = self._perm_snapshot()
         self._perm_last_snapshot = snap
         self._perm_push(snap)
         if snap is None:
             return
-        order = ["microphone", "inputMonitoring", "accessibility"]
+        order = ["microphone", "accessibility", "inputMonitoring"]
         self._perm_queue = [k for k in order if snap.get(k) != "granted"]
         self._perm_active = None
         self._perm_advance = False

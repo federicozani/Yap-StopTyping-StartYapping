@@ -28,9 +28,19 @@ MICROPHONE = "microphone"
 INPUT_MONITORING = "inputMonitoring"
 ACCESSIBILITY = "accessibility"
 
-ACCESSIBILITY_PANE = (
-    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-)
+# Deep links straight to each specific Privacy pane in System Settings (not the
+# general Settings window).
+_SECURITY_PREF = "x-apple.systempreferences:com.apple.preference.security"
+MICROPHONE_PANE = f"{_SECURITY_PREF}?Privacy_Microphone"
+INPUT_MONITORING_PANE = f"{_SECURITY_PREF}?Privacy_ListenEvent"
+ACCESSIBILITY_PANE = f"{_SECURITY_PREF}?Privacy_Accessibility"
+
+# Map each permission key to its pane URL.
+PANES = {
+    MICROPHONE: MICROPHONE_PANE,
+    INPUT_MONITORING: INPUT_MONITORING_PANE,
+    ACCESSIBILITY: ACCESSIBILITY_PANE,
+}
 
 
 # Lazy logging — importing yap at module load would be circular (yap imports us).
@@ -170,12 +180,21 @@ def request_accessibility_prompt():
         return False
 
 
+def open_pane(which):
+    """Open System Settings straight to the Privacy pane for `which`
+    (microphone / inputMonitoring / accessibility)."""
+    url = PANES.get(which)
+    if not url:
+        return
+    try:
+        subprocess.run(["open", url], check=False)
+    except Exception:
+        _log_exc(f"open_pane({which}) failed")
+
+
 def open_accessibility_settings():
     """Open System Settings straight to Privacy → Accessibility."""
-    try:
-        subprocess.run(["open", ACCESSIBILITY_PANE], check=False)
-    except Exception:
-        _log_exc("open_accessibility_settings failed")
+    open_pane(ACCESSIBILITY)
 
 
 # ---------------------------------------------------------------------------
