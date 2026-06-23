@@ -2,7 +2,24 @@ __pycache__/
 *.pyc
 build/
 dist/
+*.egg-info/
 *.iconset/
 .DS_Store
 build-env/
 *.zip
+
+# Virtualenvs
+venv/
+.venv/
+env/
+ENV/
+
+# Local config / secrets — your API keys live ONLY in ~/.yap/config.json,
+# never in the repo or the built app.
+.env
+*.env
+config.json
+.yap/
+
+# Local editor / tooling settings
+.claude/settings.local.json

@@ -214,6 +214,13 @@ textarea.prompt:focus { border-color: var(--brand-purple); box-shadow: 0 0 0 3px
   border-radius: 22px; box-shadow: var(--sh-chip-purple); }
 .about h1 { font-family: var(--font-display); font-weight: 800; font-size: 28px; }
 .about p { color: var(--ink-500); font-size: 13.5px; margin-top: 8px; line-height: 1.6; }
+.about-privacy { max-width: 560px; margin: 26px auto 0; text-align: left;
+  border-top: 1px solid var(--purple-card); padding-top: 20px; }
+.about-privacy h2 { font-family: var(--font-display); font-weight: 800; font-size: 16px;
+  color: var(--ink-900); margin-bottom: 8px; }
+.about-privacy p { color: var(--ink-600); font-size: 13px; line-height: 1.6; margin-top: 10px; }
+.about-privacy code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  background: var(--chip-neutral); border-radius: 5px; padding: 1px 5px; }
 
 /* ====================== ONBOARDING ===================================== */
 .onb-body { background: radial-gradient(120% 120% at 50% 0%, #faf2ff 0%, #fff 60%); }

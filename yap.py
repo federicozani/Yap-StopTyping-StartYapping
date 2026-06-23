@@ -22,6 +22,7 @@ import base64
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -69,6 +70,19 @@ def log_exc(prefix="ERROR"):
     otherwise vanish silently)."""
     import traceback
     log(prefix + "\n" + traceback.format_exc().rstrip())
+
+
+# Anything that looks like an API key/token. Used to scrub provider error
+# bodies before they reach the log (e.g. OpenAI 401s echo part of the key).
+_SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_\-]{6,}|AIza[A-Za-z0-9_\-]{6,}|Bearer\s+[A-Za-z0-9._\-]{6,})")
+
+
+def _redact(s):
+    """Mask key/token-looking substrings so secrets never land in the log file."""
+    try:
+        return _SECRET_RE.sub("[redacted]", str(s))
+    except Exception:
+        return s
 
 
 def notify(title, subtitle, message=""):
@@ -1513,8 +1527,9 @@ class YapApp(rumps.App):
                 return
             log(f"sending to {provider} ({model})…")
             text = transcribe(wav_bytes, mode["prompt"], provider, api_key, model)
-            preview = (text[:80] + "…") if len(text) > 80 else text
-            log("model returned:", repr(preview))
+            # Log only the length, never the content — the transcript/rewrite
+            # is the user's private text and must not be persisted to the log.
+            log(f"model returned {len(text)} chars")
             if text:
                 paste_text(text)
                 log("pasted.")
@@ -1524,8 +1539,8 @@ class YapApp(rumps.App):
             else:
                 log("model returned empty text.")
         except requests.HTTPError as e:
-            body = getattr(e.response, "text", "")[:400]
-            log("model HTTP error:", e, body)
+            body = _redact(getattr(e.response, "text", "")[:400])
+            log("model HTTP error:", _redact(str(e)), body)
             notify("Yap", "Model busy, try again", "The model was overloaded.")
         except Exception as e:
             log_exc("ERROR in _process")
@@ -1572,8 +1587,9 @@ class YapApp(rumps.App):
                 return
             log(f"text rewrite: sending {len(selected)} chars to {provider} ({model})…")
             text = rewrite(selected, mode["prompt"], provider, api_key, model)
-            preview = (text[:80] + "…") if len(text) > 80 else text
-            log("model returned:", repr(preview))
+            # Log only the length, never the content — the transcript/rewrite
+            # is the user's private text and must not be persisted to the log.
+            log(f"model returned {len(text)} chars")
             if text:
                 paste_text(text)  # replaces the still-selected text in place
                 log("pasted rewritten text.")
@@ -1583,8 +1599,8 @@ class YapApp(rumps.App):
             else:
                 log("model returned empty text.")
         except requests.HTTPError as e:
-            body = getattr(e.response, "text", "")[:400]
-            log("model HTTP error:", e, body)
+            body = _redact(getattr(e.response, "text", "")[:400])
+            log("model HTTP error:", _redact(str(e)), body)
             notify("Yap", "Model busy, try again", "The model was overloaded.")
         except Exception as e:
             log_exc("ERROR in _process_text")
