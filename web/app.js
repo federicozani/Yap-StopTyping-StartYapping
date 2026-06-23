@@ -30,16 +30,22 @@ var DEFAULT_REWRITE_PROMPT =
 // Audio-capable models per provider (voice is a single native call). The
 // free-text box in Settings lets you type any other model id.
 var PROVIDER_MODELS = {
-  gemini: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
-           "gemini-1.5-flash", "gemini-1.5-pro"],
+  gemini: ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.1-pro",
+           "gemini-2.5-flash", "gemini-2.5-pro"],
   openai: ["gpt-4o-audio-preview", "gpt-4o-mini-audio-preview"]
 };
-var PROVIDER_DEFAULT_MODEL = { gemini: "gemini-2.5-flash", openai: "gpt-4o-audio-preview" };
+var PROVIDER_DEFAULT_MODEL = { gemini: "gemini-3.1-flash-lite", openai: "gpt-4o-audio-preview" };
+// Models flagged "(Recommended)" in the picker (the dropdown label only — the
+// stored value is always the bare model id).
+var RECOMMENDED_MODEL = { gemini: "gemini-3.1-flash-lite" };
+function modelLabel(provider, id) {
+  return id + (RECOMMENDED_MODEL[provider] === id ? "  (Recommended)" : "");
+}
 var MODE_EMOJI = ["🧹", "📝", "🎙️", "🌍", "✨", "💬", "📌", "⚡"];
 
 var CONFIG = { provider: "gemini",
   providers: {
-    gemini: { api_key: "", model: "gemini-2.5-flash" },
+    gemini: { api_key: "", model: "gemini-3.1-flash-lite" },
     openai: { api_key: "", model: "gpt-4o-audio-preview" }
   },
   trigger_mode: "hold", recording_indicator: "full", modes: [] };
@@ -169,7 +175,7 @@ function fillModelSelect(provider) {
   sel.innerHTML = "";
   sel.setAttribute("data-provider", provider);
   list.forEach(function (mo) {
-    var o = el("option"); o.value = mo; o.textContent = mo;
+    var o = el("option"); o.value = mo; o.textContent = modelLabel(provider, mo);
     if (inList && mo === stored) o.selected = true;
     sel.appendChild(o);
   });
@@ -339,7 +345,7 @@ function initOnboarding() {
     var list = PROVIDER_MODELS[provider] || [];
     modelSel.innerHTML = "";
     list.forEach(function (mo) {
-      var o = el("option"); o.value = mo; o.textContent = mo; modelSel.appendChild(o);
+      var o = el("option"); o.value = mo; o.textContent = modelLabel(provider, mo); modelSel.appendChild(o);
     });
     modelSel.value = PROVIDER_DEFAULT_MODEL[provider] || list[0] || "";
   }

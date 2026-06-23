@@ -216,7 +216,7 @@ DEFAULT_CONFIG = {
     "providers": {
         "gemini": {
             "api_key": "PASTE_YOUR_GEMINI_API_KEY_HERE",
-            "model": "gemini-2.5-flash",
+            "model": "gemini-3.1-flash-lite",
         },
         "openai": {
             "api_key": "",
@@ -239,7 +239,7 @@ DEFAULT_CONFIG = {
     # Bumped whenever the built-in prompts change. On startup, if your config's
     # version is older, the modes are refreshed to these defaults (your provider,
     # API keys and model picks are kept). New prompt fixes apply on a restart.
-    "config_version": 8,
+    "config_version": 9,
     "modes": [
         {
             "key": "clean",
@@ -419,6 +419,15 @@ def load_config():
         if not slot.get("model"):
             slot["model"] = DEFAULT_CONFIG["providers"][name]["model"]
             needs_save = True
+    # Migrate away from Gemini models Google has retired/shut down: point a saved
+    # config at the current default so it never references a dead model. (A custom
+    # model the user typed is left alone — only the known-retired ids are moved.)
+    retired_gemini = {"gemini-2.0-flash", "gemini-2.0-flash-lite",
+                      "gemini-1.5-flash", "gemini-1.5-pro"}
+    gem = providers.get("gemini")
+    if isinstance(gem, dict) and gem.get("model") in retired_gemini:
+        gem["model"] = DEFAULT_CONFIG["providers"]["gemini"]["model"]
+        needs_save = True
     # If the built-in prompts have been updated (newer version), refresh the
     # modes to the latest defaults, keeping the user's provider, keys and models.
     if cfg.get("config_version") != DEFAULT_CONFIG["config_version"]:
@@ -1617,7 +1626,7 @@ if __name__ == "__main__":
         # Exercise BOTH providers' audio + text request paths with a dummy key
         # (expect an HTTP/auth error, which proves requests + TLS + the request
         # shape work; an SSL/conn error would prove they don't).
-        selftest_models = {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-audio-preview"}
+        selftest_models = {"gemini": "gemini-3.1-flash-lite", "openai": "gpt-4o-audio-preview"}
         for prov, mdl in selftest_models.items():
             try:
                 transcribe(b"RIFF....", "hi", prov, "dummy-key", mdl, retries=1)
