@@ -32,7 +32,18 @@
       "Bash(rm -rf /tmp/yap-config-backup)",
       "Bash(ls ~/.parla)",
       "Bash(./build-env/bin/python -m py_compile yap.py)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(ls -d \"/Users/federicozaninelli/Downloads/Claude Code Projects/Parla/dist/\"*.app 2>/dev/null; ls -d /Applications/Yap.app /Applications/Parla.app 2>/dev/null; echo \"---running---\"; pgrep -fl -i \"yap\\\\|parla\" 2>/dev/null | grep -v -i \"claude\\\\|grep\")",
+      "Read(//Applications/Yap.app/**)",
+      "Bash(grep -v \"/$\")",
+      "Bash(grep \"/$\")",
+      "Bash(YAP_SELFTEST=1 \"dist/Yap.app/Contents/MacOS/Yap\")",
+      "Bash(echo \"\\(selftest exited $?\\)\")",
+      "Bash(pkill -f \"/Applications/Yap.app/Contents/MacOS/Yap\")",
+      "Bash(rm -rf /Applications/Yap.app)",
+      "Bash(cp -R dist/Yap.app /Applications/Yap.app)",
+      "Bash(build-env/bin/python -c ' *)",
+      "Bash(build-env/bin/python -c \"import ast; ast.parse\\(open\\('yap.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")"
     ]
   }
 }

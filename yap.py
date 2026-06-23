@@ -36,6 +36,16 @@ import rumps
 import sounddevice as sd
 from pynput import keyboard
 
+# Quartz powers two macOS-only tricks: (1) sending a clean Cmd+C/Cmd+V whose
+# modifier flags are set explicitly, so the Control+Option chord the user is
+# still holding can't corrupt it; (2) suppressing the text-rewrite chord key so
+# it never types into the focused app. Guarded so the app still runs (minus those
+# tricks) if Quartz is somehow unavailable.
+try:
+    import Quartz
+except Exception:
+    Quartz = None
+
 
 def log(*a):
     # Prints to the Terminal so we can see what the app is doing, AND appends to
@@ -120,13 +130,27 @@ CHANNELS = 1
 #   bound to an arrow: "left", "up", "right", or "down".
 #
 #   TEXT modes (e.g. "Rewrite") — there's no recording. You select text in any
-#   app, then tap a letter while holding Control+Option (⌃⌥). Yap copies the
-#   selection, sends it to Gemini with the mode's prompt, and pastes the result
-#   back over the selection. So each text mode is bound to a letter ("r", "e", …).
+#   app, then tap an arrow while holding Right Command + Right Option (⌘⌥). Yap
+#   copies the selection, sends it to Gemini with the mode's prompt, and pastes
+#   the result back over the selection. Same arrow layout as voice; the extra
+#   Command is what turns "speak" into "rewrite the selection".
 
-# Valid hotkeys for each input type. Voice modes use the four arrows; text modes
-# use a letter (triggered with Control+Option held).
+# Valid hotkeys for each input type. BOTH voice and text modes are bound to the
+# four arrows now. They're told apart by Command: voice is "Right Option + arrow"
+# (hold ⌥, tap arrow, speak); text rewrite is "Right Command + Right Option +
+# arrow" (hold ⌘⌥, tap arrow, rewrite the selection in place).
 ARROW_HOTKEYS = {"left", "up", "right", "down"}
+
+# Arrow hotkey name → macOS virtual-key code (Carbon HIToolbox kVK_*Arrow). The
+# suppressor tap matches the rewrite chord by the arrow's vk + the modifier flags.
+ARROW_VK = {"left": 123, "right": 124, "down": 125, "up": 126}
+
+# Device-dependent modifier bits inside a CGEvent's flags (IOKit IOLLEvent.h).
+# CGEventGetFlags reports which SIDE a modifier is on; we require the RIGHT-side
+# Command and Option so (a) it matches the intended gesture and (b) the common
+# left-hand ⌘⌥← ("previous tab" in browsers) keeps working untouched.
+NX_DEVICERCMDKEYMASK = 0x000010  # right Command
+NX_DEVICERALTKEYMASK = 0x000040  # right Option
 
 # Text-mode key → macOS virtual-key code (Carbon HIToolbox <Events.h>, kVK_ANSI_*).
 # We match the text-mode chord by the key's *virtual-key code*, NOT the character
@@ -163,10 +187,8 @@ def chord_letter(key):
 
 
 def _hotkey_valid(mode):
-    """True if a mode's hotkey is valid for its input type (arrow for voice
-    modes, a letter for text modes)."""
-    if mode.get("input", "audio") == "text":
-        return mode.get("hotkey") in TEXT_HOTKEYS
+    """True if a mode's hotkey is valid. Both voice and text modes use the four
+    arrows now (text adds Command to the gesture, not a different key)."""
     return mode.get("hotkey") in ARROW_HOTKEYS
 
 
@@ -186,7 +208,7 @@ DEFAULT_CONFIG = {
     # Bumped whenever the built-in prompts change. On startup, if your config's
     # version is older, the modes are refreshed to these defaults (your API key
     # and model are kept). This means new prompt fixes apply on a simple restart.
-    "config_version": 5,
+    "config_version": 6,
     "modes": [
         {
             "name": "Clean",
@@ -249,12 +271,12 @@ DEFAULT_CONFIG = {
         },
         {
             # A TEXT mode (no recording): select text anywhere, then tap this
-            # key while holding Control+Option (⌃⌥) to rewrite the selection.
-            # Default is "/" — Control keeps the OS from typing "÷" over your
-            # selection, and we match the slash by its virtual-key code.
+            # arrow while holding Right Command + Right Option (⌘⌥) to rewrite the
+            # selection in place. Same arrows as voice; the extra Command is what
+            # makes it rewrite instead of record.
             "name": "Rewrite",
             "input": "text",
-            "hotkey": "/",  # Control+Option+/
+            "hotkey": "left",  # Right ⌘ + Right ⌥ + ←
             "prompt": (
                 "Rewrite the following text in a clean, clear, professional way. "
                 "Keep my meaning and key points. Return only the rewritten text, "
@@ -431,13 +453,35 @@ class Recorder:
 _kbd = keyboard.Controller()
 
 
+def _post_cmd_key(vk):
+    """Send a single Cmd+<vk> keystroke via a Quartz CGEvent with an EXPLICIT
+    Command-only flag mask. Unlike pynput's press/release (which combine with
+    whatever modifiers are physically held), this guarantees a clean Cmd+key:
+    if the user is still holding the Control+Option rewrite chord, the copy/paste
+    won't degrade into Ctrl+Opt+Cmd+key (which copies/pastes nothing)."""
+    down = Quartz.CGEventCreateKeyboardEvent(None, vk, True)
+    Quartz.CGEventSetFlags(down, Quartz.kCGEventFlagMaskCommand)
+    up = Quartz.CGEventCreateKeyboardEvent(None, vk, False)
+    Quartz.CGEventSetFlags(up, Quartz.kCGEventFlagMaskCommand)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+
+
+def _send_cmd(letter):
+    """Cmd+<letter> via Quartz when available, else fall back to pynput."""
+    if Quartz is not None and letter in LETTER_VK:
+        _post_cmd_key(LETTER_VK[letter])
+    else:
+        with _kbd.pressed(keyboard.Key.cmd):
+            _kbd.press(letter)
+            _kbd.release(letter)
+
+
 def paste_text(text: str):
     # pbcopy puts the text on the macOS clipboard (built in, no extra package).
     subprocess.run("pbcopy", input=text.encode("utf-8"), check=True)
     time.sleep(0.15)  # give the clipboard a moment, and let the hotkey fully release
-    with _kbd.pressed(keyboard.Key.cmd):
-        _kbd.press("v")
-        _kbd.release("v")
+    _send_cmd("v")
 
 
 def copy_selection() -> str:
@@ -454,9 +498,7 @@ def copy_selection() -> str:
     except Exception:
         log_exc("copy_selection: failed to seed clipboard sentinel")
     time.sleep(0.05)
-    with _kbd.pressed(keyboard.Key.cmd):
-        _kbd.press("c")
-        _kbd.release("c")
+    _send_cmd("c")
     time.sleep(0.2)  # give the frontmost app time to write its selection out
     try:
         out = subprocess.run("pbpaste", capture_output=True, check=True).stdout
@@ -502,8 +544,9 @@ class YapApp(rumps.App):
         self.recorder = Recorder()
         self.recording = False
         self.option_down = False  # is the activator (Right Option) being held?
-        self.ctrl_down = False    # is Control held? (for the text-rewrite chord)
-        self.alt_down = False     # is Option/Alt held? (either side; for the chord)
+        self.ctrl_down = False    # is Control held? (legacy; for _process_text settle)
+        self.alt_down = False     # is Option/Alt held? (either side)
+        self.cmd_down = False     # is Command held? (distinguishes rewrite from voice)
         self._text_busy = False   # a text-rewrite (copy → Gemini → paste) is in flight
         self.active_mode = None
         # Recording trigger state. _active_trigger_mode is snapshotted at the
@@ -632,9 +675,11 @@ class YapApp(rumps.App):
             "right": "Right Option + → Right",
             "down": "Right Option + ↓ Down",
         }
+        arrow_glyph = {"left": "←", "up": "↑", "right": "→", "down": "↓"}
         for m in self.config["modes"]:
             if m.get("input", "audio") == "text":
-                label = "Control + Option + " + (m.get("hotkey") or "").upper()
+                glyph = arrow_glyph.get(m.get("hotkey"), m.get("hotkey") or "")
+                label = "Right ⌘ + Right ⌥ + " + glyph
                 items.append(f"   {label}  →  {m['name']}  (text)")
             else:
                 label = key_labels.get(m["hotkey"], m["hotkey"])
@@ -734,10 +779,8 @@ class YapApp(rumps.App):
                 for m in payload.get("modes", []):
                     is_text = m.get("input") == "text"
                     hk = (m.get("hotkey") or "").strip().lower()
-                    if is_text:
-                        hotkey = hk if hk in TEXT_HOTKEYS else "/"
-                    else:
-                        hotkey = hk if hk in ARROW_HOTKEYS else "left"
+                    # Both voice and text modes are bound to arrows now.
+                    hotkey = hk if hk in ARROW_HOTKEYS else "left"
                     modes.append({
                         "name": (m.get("name") or "Button").strip(),
                         "input": "text" if is_text else "audio",
@@ -1013,14 +1056,20 @@ class YapApp(rumps.App):
         notify("Yap", "Settings reloaded", "")
 
     def _rebuild_hotkey_maps(self):
-        """Split modes into the two trigger namespaces: voice modes keyed by
-        arrow ('left'/'up'/…) for the Right Option + arrow hold-to-talk, and text
-        modes keyed by letter ('r'/…) for the Control+Option + letter chord."""
+        """Split modes into the two trigger namespaces, both keyed by arrow:
+        voice modes for 'Right Option + arrow' (hold-to-talk), and text modes for
+        'Right Command + Right Option + arrow' (rewrite the selection)."""
         modes = self.config.get("modes", [])
         self.hotkey_map = {m["hotkey"]: m for m in modes
                            if m.get("input", "audio") != "text"}
         self.text_hotkey_map = {m["hotkey"]: m for m in modes
                                 if m.get("input", "audio") == "text"}
+        # Arrow virtual-key code -> text mode, for the dedicated suppressor tap.
+        # It uses this to SUPPRESS the rewrite arrow so it never reaches the app
+        # (which would move/collapse the selection) and to know which mode to fire.
+        self._text_arrow_vk_to_mode = {ARROW_VK[k]: m
+                                       for k, m in self.text_hotkey_map.items()
+                                       if k in ARROW_VK}
 
     def _save_config(self):
         with open(CONFIG_PATH, "w") as f:
@@ -1057,19 +1106,86 @@ class YapApp(rumps.App):
             keyboard.Key.right: "right",
             keyboard.Key.down: "down",
         }
-        listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
+        # Voice listener: LISTEN-ONLY (Input Monitoring), exactly as the working
+        # version. It must NOT suppress keys, so voice never depends on
+        # Accessibility — keep it free of darwin_intercept.
+        listener = keyboard.Listener(on_press=self._on_press,
+                                     on_release=self._on_release)
         listener.daemon = True
         listener.start()
+
+        # Separate, dedicated tap JUST for the text-rewrite chord. darwin_intercept
+        # makes this one an ACTIVE tap (Accessibility — already required to paste)
+        # so it can SUPPRESS the trigger key ("/"), keeping it out of the focused
+        # app so the selection survives, and fire the rewrite. Kept independent so
+        # that if Accessibility isn't granted (tap fails to create) the voice
+        # listener above keeps working regardless.
+        self._suppressor = None
+        if Quartz is not None:
+            try:
+                self._suppressor = keyboard.Listener(
+                    on_press=lambda k: None, on_release=lambda k: None,
+                    darwin_intercept=self._intercept)
+                self._suppressor.daemon = True
+                self._suppressor.start()
+            except Exception:
+                log_exc("text-rewrite suppressor tap could not start "
+                        "(needs Accessibility) — voice still works")
+
+    def _intercept(self, event_type, event):
+        """Event-tap filter for the dedicated suppressor tap (macOS). Return None
+        to swallow the event, or the event to let it through. We act ONLY on a
+        text-mode arrow pressed while RIGHT Command + RIGHT Option are held:
+        swallow it (so the arrow never reaches the app and moves/collapses the
+        selection, and so the voice tap never sees it) and fire the rewrite.
+        Everything else passes through untouched. Must never raise: on any error
+        we return the event so a bug here can't eat the user's typing."""
+        try:
+            vk_to_mode = getattr(self, "_text_arrow_vk_to_mode", None)
+            if not vk_to_mode:
+                return event
+            keycode = Quartz.CGEventGetIntegerValueField(
+                event, Quartz.kCGKeyboardEventKeycode)
+            mode = vk_to_mode.get(keycode)
+            if mode is None:
+                return event  # not one of our rewrite arrows
+            flags = Quartz.CGEventGetFlags(event)
+            right_cmd = flags & NX_DEVICERCMDKEYMASK
+            right_alt = flags & NX_DEVICERALTKEYMASK
+            if not (right_cmd and right_alt):
+                # Diagnostic: a rewrite arrow with generic ⌘⌥ but not the right-
+                # side bits (e.g. left-hand combo, or a keyboard that doesn't
+                # report sides). Logged so we can relax the requirement if needed.
+                if (flags & Quartz.kCGEventFlagMaskCommand
+                        and flags & Quartz.kCGEventFlagMaskAlternate):
+                    log("rewrite arrow seen without right-side ⌘⌥ bits; flags=",
+                        hex(int(flags)), "(left-hand combo passes through)")
+                return event
+            # Our chord. Fire on key-DOWN only (the listen-only voice tap never
+            # sees this arrow since we suppress it here). Re-resolve mode after any
+            # settings reload, then swallow both down and up.
+            if event_type == Quartz.kCGEventKeyDown \
+                    and not self.recording and not self._text_busy:
+                self._maybe_reload()
+                mode = getattr(self, "_text_arrow_vk_to_mode", {}).get(keycode, mode)
+                self._trigger_text_mode(mode)
+            return None  # suppress — keep the selection intact for Cmd+C
+        except Exception:
+            log_exc("text-rewrite intercept error")
+        return event
 
     def _on_press(self, key):
         # Show every special key so we can confirm what keys report as.
         if isinstance(key, keyboard.Key):
             log("key pressed:", key)
-        # Track Control/Option for the text-rewrite chord (Control+Option+<letter>).
+        # Track modifier state. Command distinguishes the rewrite gesture (⌘⌥ +
+        # arrow) from voice (⌥ + arrow), so we never start a recording when ⌘ held.
         if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
             self.ctrl_down = True
         elif key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
             self.alt_down = True
+        elif key in (keyboard.Key.cmd_l, keyboard.Key.cmd_r):
+            self.cmd_down = True
         # Track the activator (Right Option) being held.
         if key == self._activator:
             self.option_down = True
@@ -1080,18 +1196,13 @@ class YapApp(rumps.App):
                 self._toggle_armed = False
                 self._finish_recording()
             return
-        # Text-rewrite chord: Control+Option held + a letter bound to a text mode.
-        # Independent of the voice "Right Option + arrow", so the two never clash.
-        if self.ctrl_down and self.alt_down and not self.recording and not self._text_busy:
-            letter = chord_letter(key)
-            if letter is not None:
-                self._maybe_reload()  # honor any settings saved/edited since last time
-                mode = self.text_hotkey_map.get(letter)
-                if mode is not None:
-                    self._trigger_text_mode(mode)
-                    return
-        # An arrow tapped WHILE the activator is held starts recording.
-        if not self.option_down or self.recording:
+        # Text-rewrite (Right ⌘ + Right ⌥ + arrow) is handled entirely by the
+        # separate suppressor tap in _intercept(), which swallows the arrow so it
+        # never reaches here or the app. We do NOT trigger it here.
+        # An arrow tapped WHILE the activator is held (and Command is NOT) starts
+        # recording. The cmd_down guard makes Command the clean switch between
+        # "speak" (no ⌘) and "rewrite" (⌘ held).
+        if not self.option_down or self.recording or self.cmd_down:
             return
         arrow = self._arrow_names.get(key)
         if arrow is None:
@@ -1125,11 +1236,13 @@ class YapApp(rumps.App):
             log("ERROR starting microphone:", e)
 
     def _on_release(self, key):
-        # Clear the Control/Option chord modifier state.
+        # Clear modifier state.
         if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
             self.ctrl_down = False
         elif key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
             self.alt_down = False
+        elif key in (keyboard.Key.cmd_l, keyboard.Key.cmd_r):
+            self.cmd_down = False
         # Releasing the activator (Right Option) stops and processes a recording…
         if key != self._activator:
             return

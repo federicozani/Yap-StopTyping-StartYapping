@@ -13,13 +13,15 @@ var HOTKEYS = [
   { v: "right", label: "⌥ + →" },
   { v: "down",  label: "⌥ + ↓" }
 ];
-// Text modes (e.g. Rewrite) fire on Control+Option + a key — separate from the
-// voice "Right Option + arrow" combos, so the two can't conflict. Non-letter
-// keys like "/" work too (Control keeps the OS from typing a "÷" character).
-var TEXT_HOTKEYS = ["/", ";", "'", ",", ".", "[", "]", "-", "=",
-                    "r", "e", "t", "y", "u", "i", "o", "p", "j", "k", "l"].map(
-  function (c) { return { v: c, label: "⌃⌥ + " + c.toUpperCase() }; }
-);
+// Text modes (e.g. Rewrite) fire on Right Command + Right Option + arrow — the
+// voice gesture ("Right Option + arrow") plus Command. Same arrows as voice,
+// shown with a ⌘⌥ prefix. Command is what makes it rewrite instead of record.
+var TEXT_HOTKEYS = [
+  { v: "left",  label: "⌘⌥ + ←" },
+  { v: "up",    label: "⌘⌥ + ↑" },
+  { v: "right", label: "⌘⌥ + →" },
+  { v: "down",  label: "⌘⌥ + ↓" }
+];
 var DEFAULT_REWRITE_PROMPT =
   "Rewrite the following text in a clean, clear, professional way. Keep my " +
   "meaning and key points. Return only the rewritten text, with no preamble " +
@@ -55,15 +57,10 @@ function hotkeySelect(value) {
   return s;
 }
 
-function letterSelect(value) {
-  // The Control+Option + letter picker for text modes. If the saved letter
-  // isn't in our default list (hand-edited config), show it anyway so it sticks.
+function textHotkeySelect(value) {
+  // Arrow picker for text modes (Right ⌘ + Right ⌥ + arrow).
   var s = el("select", "hk-select");
-  var opts = TEXT_HOTKEYS.slice();
-  if (value && !opts.some(function (h) { return h.v === value; })) {
-    opts.unshift({ v: value, label: "⌃⌥ + " + String(value).toUpperCase() });
-  }
-  opts.forEach(function (h) {
+  TEXT_HOTKEYS.forEach(function (h) {
     var o = el("option"); o.value = h.v; o.textContent = h.label;
     if (h.v === value) o.selected = true;
     s.appendChild(o);
@@ -84,11 +81,11 @@ function renderModes() {
     var meta = el("div", "mode-meta");
     var name = el("input", "mode-name"); name.value = m.name || ""; name.placeholder = "Button name";
     name.addEventListener("input", function () { m.name = name.value; });
-    var sub = el("div", "mode-sub", isText ? "Text mode · select, then ⌃⌥ shortcut" : "Voice mode");
+    var sub = el("div", "mode-sub", isText ? "Text mode · select, then ⌘⌥ + arrow" : "Voice mode");
     meta.appendChild(name); meta.appendChild(sub);
 
     var kbd = el("div", "kbd-row");
-    var hk = isText ? letterSelect(m.hotkey) : hotkeySelect(m.hotkey);
+    var hk = isText ? textHotkeySelect(m.hotkey) : hotkeySelect(m.hotkey);
     hk.addEventListener("change", function () { m.hotkey = hk.value; });
     kbd.appendChild(hk);
 
@@ -351,8 +348,8 @@ function renderPanelRows(modes) {
     var keyLabel, sub, icon;
     if (isText) {
       var th = TEXT_HOTKEYS.filter(function (h) { return h.v === m.hotkey; })[0];
-      keyLabel = th ? th.label : ("⌃⌥ + " + String(m.hotkey || "").toUpperCase());
-      sub = "Select text, press the keys";
+      keyLabel = th ? th.label : ("⌘⌥ + " + String(m.hotkey || ""));
+      sub = "Select text, then ⌘⌥ + arrow";
       icon = "✍️";
     } else {
       var hk = HOTKEYS.filter(function (h) { return h.v === m.hotkey; })[0];
