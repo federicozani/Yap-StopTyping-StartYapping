@@ -101,6 +101,14 @@
         <div class="section-desc">How voice recording starts and stops, and what Yap
           shows while you’re talking.</div>
         <div style="margin-bottom:22px">
+          <label class="field-label" for="input-device">Microphone</label>
+          <select class="select" id="input-device" style="min-width:300px"></select>
+          <div class="row" style="border:none;padding:8px 0 0">
+            <div class="help">“Default (system)” follows your macOS Sound setting. If recording
+              doesn’t work — common on a Mac with no built-in mic — pick your mic here.</div>
+          </div>
+        </div>
+        <div style="margin-bottom:22px">
           <label class="field-label" for="trigger-mode">Trigger</label>
           <select class="select" id="trigger-mode" style="min-width:300px">
             <option value="hold">Hold to talk — hold ⌥, tap an arrow, release to stop</option>

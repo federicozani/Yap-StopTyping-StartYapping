@@ -48,7 +48,8 @@ var CONFIG = { provider: "gemini",
     gemini: { api_key: "", model: "gemini-3.1-flash-lite" },
     openai: { api_key: "", model: "gpt-4o-audio-preview" }
   },
-  trigger_mode: "hold", recording_indicator: "full", modes: [] };
+  trigger_mode: "hold", recording_indicator: "full",
+  input_device: "", input_devices: [], modes: [] };
 
 // Make sure CONFIG always has the per-provider shape, folding in any old flat
 // api_key/model (belt-and-suspenders; the backend already migrates the file).
@@ -193,6 +194,25 @@ function fillVoice() {
 }
 
 function fillRecording() {
+  var d = document.getElementById("input-device");
+  if (d) {
+    var devices = CONFIG.input_devices || [];
+    var saved = CONFIG.input_device || "";
+    // If the saved mic isn't in the current list (unplugged), keep it as an
+    // option labelled "(not connected)" so the user can see what was chosen.
+    var hasSaved = devices.some(function (o) { return o.name === saved; });
+    d.innerHTML = "";
+    devices.forEach(function (o) {
+      var opt = el("option"); opt.value = o.name; opt.textContent = o.label;
+      d.appendChild(opt);
+    });
+    if (saved && !hasSaved) {
+      var opt = el("option"); opt.value = saved;
+      opt.textContent = saved + " (not connected)";
+      d.appendChild(opt);
+    }
+    d.value = saved;
+  }
   var t = document.getElementById("trigger-mode");
   if (t) t.value = (CONFIG.trigger_mode === "toggle") ? "toggle" : "hold";
   var r = document.getElementById("recording-indicator");
@@ -217,6 +237,8 @@ function collectAndValidate() {
   CONFIG.providers[prov].model =
     custom || document.getElementById("model").value || PROVIDER_DEFAULT_MODEL[prov];
   // pull the recording-behavior settings (null-guarded — same form)
+  var d = document.getElementById("input-device");
+  if (d) CONFIG.input_device = d.value || "";
   var t = document.getElementById("trigger-mode");
   if (t) CONFIG.trigger_mode = (t.value === "toggle") ? "toggle" : "hold";
   var r = document.getElementById("recording-indicator");

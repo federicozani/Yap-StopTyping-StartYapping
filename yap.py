@@ -233,6 +233,11 @@ DEFAULT_CONFIG = {
     #   "minimal" — a small "Listening…" chip near the menu bar, so the rest of
     #               your screen stays usable.
     "recording_indicator": "full",
+    # Which microphone to record from. Empty string = let macOS pick the system
+    # default input. Otherwise the exact device name (as shown in Settings →
+    # Microphone). Matters on Macs without a built-in mic (e.g. a Mac Mini), where
+    # the "default" input may not be the mic you actually plugged in.
+    "input_device": "",
     # False until the user finishes the welcome/onboarding flow (or saves a key
     # in it). Existing configs are treated as already-onboarded on load.
     "onboarding_complete": False,
@@ -377,6 +382,11 @@ def load_config():
         needs_save = True
     if cfg.get("recording_indicator") not in ("full", "minimal"):
         cfg["recording_indicator"] = "full"
+        needs_save = True
+    # Microphone selection: default to the empty string (system default input)
+    # for configs written before this existed, and coerce any non-string value.
+    if not isinstance(cfg.get("input_device"), str):
+        cfg["input_device"] = ""
         needs_save = True
     # An existing config means the user has already used Yap, so treat them as
     # already-onboarded (only a brand-new config, created above with the default
@@ -574,31 +584,109 @@ def _has_usable_key(config: dict) -> bool:
 # Audio recording: collect mic frames while a key is held.
 # ---------------------------------------------------------------------------
 
+def list_input_devices():
+    """Input-capable devices for the Settings microphone picker. Always returns
+    at least the system-default entry, and never raises — a PortAudio hiccup must
+    not break the Settings window. Each entry is {"name", "label"}; an empty
+    name means "let macOS pick the system default input"."""
+    devices = [{"name": "", "label": "Default (system)"}]
+    try:
+        seen = set()
+        for dev in sd.query_devices():
+            if dev.get("max_input_channels", 0) > 0:
+                name = (dev.get("name") or "").strip()
+                if name and name not in seen:
+                    seen.add(name)
+                    devices.append({"name": name, "label": name})
+    except Exception as e:
+        log("could not enumerate input devices:", e)
+    return devices
+
+
+def _resolve_input_device(name):
+    """Map a saved device name to a PortAudio device index. Returns None for the
+    system default — either because the name is empty, or because that device
+    isn't currently connected (so we fall back to the default instead of failing)."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    try:
+        for idx, dev in enumerate(sd.query_devices()):
+            if (dev.get("max_input_channels", 0) > 0
+                    and (dev.get("name") or "").strip() == name):
+                return idx
+    except Exception:
+        pass
+    return None
+
+
 class Recorder:
     def __init__(self):
         self._frames = []
         self._stream = None
+        # The rate/channels we actually CAPTURED at (filled in by start()). The
+        # WAV we hand back is always SAMPLE_RATE / CHANNELS — we resample in stop().
+        self._capture_rate = SAMPLE_RATE
+        self._capture_channels = CHANNELS
 
-    def start(self):
+    def start(self, device_name=""):
         self._frames = []
+
+        device = _resolve_input_device(device_name)
+
+        # Open the mic at its NATIVE sample rate and channel count instead of
+        # forcing 16 kHz mono. Many external/USB mics — and any Mac without a
+        # built-in microphone (e.g. a Mac Mini) — refuse to open at exactly
+        # 16 kHz, which is why recording silently failed there. We capture at
+        # whatever the device supports and downsample to 16 kHz in stop().
+        try:
+            info = sd.query_devices(device, "input")
+            rate = int(round(info.get("default_samplerate") or SAMPLE_RATE))
+            max_in = int(info.get("max_input_channels") or 1)
+        except Exception:
+            rate = SAMPLE_RATE
+            max_in = CHANNELS
+        channels = max(1, min(2, max_in))
+
+        self._capture_rate = rate
+        self._capture_channels = channels
 
         def callback(indata, frames, time_info, status):
             self._frames.append(indata.copy())
 
         self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="int16", callback=callback
+            samplerate=rate, channels=channels, dtype="int16",
+            device=device, callback=callback,
         )
         self._stream.start()
 
     def stop(self) -> bytes:
-        """Stop recording and return the audio as in-memory WAV bytes."""
+        """Stop recording and return the audio as in-memory WAV bytes — always
+        16 kHz mono, regardless of the rate/channels the device captured at."""
         if self._stream is not None:
             self._stream.stop()
             self._stream.close()
             self._stream = None
         if not self._frames:
             return b""
-        audio = np.concatenate(self._frames, axis=0)
+        audio = np.concatenate(self._frames, axis=0)  # (n, channels) int16
+
+        # Down-mix to mono.
+        if audio.ndim == 2 and audio.shape[1] > 1:
+            audio = audio.mean(axis=1)
+        audio = audio.reshape(-1).astype(np.float32)
+
+        # Resample to 16 kHz with linear interpolation. Dependency-free (numpy is
+        # already bundled) and perfectly adequate for speech. Skipped when the
+        # device already captured at 16 kHz.
+        if self._capture_rate and self._capture_rate != SAMPLE_RATE and audio.size:
+            n_out = int(round(audio.size * SAMPLE_RATE / self._capture_rate))
+            if n_out > 0:
+                src_idx = np.linspace(0.0, audio.size - 1, num=n_out)
+                audio = np.interp(src_idx, np.arange(audio.size), audio)
+
+        audio = np.clip(audio, -32768, 32767).astype(np.int16)
+
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
             wf.setnchannels(CHANNELS)
@@ -951,6 +1039,10 @@ class YapApp(rumps.App):
             },
             "trigger_mode": self.config.get("trigger_mode", "hold"),
             "recording_indicator": self.config.get("recording_indicator", "full"),
+            # The chosen mic ("" = system default) plus the list of currently
+            # available input devices, so Settings can render the picker.
+            "input_device": self.config.get("input_device", ""),
+            "input_devices": list_input_devices(),
             "modes": [dict(m) for m in self.config.get("modes", [])],
             # The shipped defaults, so the Settings UI can offer a per-mode
             # "Reset to default" (matched by the stable `key`).
@@ -1000,6 +1092,12 @@ class YapApp(rumps.App):
                 self.config["trigger_mode"] = tm if tm in ("hold", "toggle") else "hold"
                 ri = (payload.get("recording_indicator") or "full").strip()
                 self.config["recording_indicator"] = ri if ri in ("full", "minimal") else "full"
+                # Microphone: accept "" (system default) or a name that is a
+                # currently-available input device. Anything else falls back to
+                # the default so a stale/unplugged name can't strand recording.
+                dev = (payload.get("input_device") or "").strip()
+                valid_names = {d["name"] for d in list_input_devices()}
+                self.config["input_device"] = dev if dev in valid_names else ""
                 self.config["modes"] = modes
                 self._save_config()  # writes config.json, rebuilds menu, refreshes hotkeys
                 log("settings saved from web UI")
@@ -1476,7 +1574,7 @@ class YapApp(rumps.App):
         self._active_trigger_mode = self.config.get("trigger_mode", "hold")
         self._toggle_armed = False
         try:
-            self.recorder.start()
+            self.recorder.start(self.config.get("input_device", ""))
             self._record_start = time.time()
             self._set_state("recording")  # _tick shows the live countdown
             tail = ("— tap Right Option again to stop"
@@ -1491,6 +1589,12 @@ class YapApp(rumps.App):
             self._toggle_armed = False
             self._set_state("idle")
             log("ERROR starting microphone:", e)
+            # Don't fail silently — tell the user, since the most common cause is
+            # a Mac with no usable default mic (e.g. a Mac Mini) or an unplugged
+            # device. notify() falls back to a log line when run from Terminal.
+            notify("Yap couldn't start the microphone",
+                   "Check that a mic is connected, then pick it in "
+                   "Settings → Microphone.")
 
     def _on_release(self, key):
         # Clear modifier state.
