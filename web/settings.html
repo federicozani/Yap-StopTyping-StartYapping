@@ -14,6 +14,7 @@
         <div class="nav-item active" data-pane="buttons"><span class="ico">🎛️</span> Buttons &amp; keys</div>
         <div class="nav-item" data-pane="voice"><span class="ico">🔑</span> Provider &amp; model</div>
         <div class="nav-item" data-pane="recording"><span class="ico">🎙️</span> Recording</div>
+        <div class="nav-item" data-pane="diagnostics"><span class="ico">🩺</span> Test &amp; diagnostics</div>
         <div class="nav-item" data-pane="about"><span class="ico">🐟</span> About</div>
       </nav>
       <div class="side-footer">
@@ -133,6 +134,62 @@
           <span class="saved-flash" id="saved3">Saved ✓</span>
           <span class="spacer"></span>
           <button class="btn btn-primary" id="save3">Save</button>
+        </div>
+      </section>
+
+      <!-- TEST & DIAGNOSTICS -------------------------------------------- -->
+      <section class="pane" id="pane-diagnostics">
+        <style>
+          .diag-card { border:1px solid var(--hairline, #e3e3e6); border-radius:12px;
+            padding:16px 18px; margin-bottom:16px; }
+          .diag-card h3 { margin:0 0 4px; font-size:15px; }
+          .diag-card .help { margin:0 0 12px; }
+          .diag-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+          .diag-status { font-size:13px; line-height:1.4; flex:1 1 220px; min-width:200px; }
+          .diag-status.pass { color:#137333; }
+          .diag-status.fail { color:#c5221f; }
+          .diag-status.run  { color:#7a7a7a; }
+          .diag-badge { font-weight:700; }
+          .diag-sub { color:#9a6b00; }
+          .meter { height:10px; border-radius:6px; background:#ececef; overflow:hidden;
+            margin-top:10px; }
+          .meter > span { display:block; height:100%; width:0%;
+            background:linear-gradient(90deg,#34c759,#30b0c7); transition:width .1s linear; }
+        </style>
+        <div class="section-title">Test &amp; diagnostics</div>
+        <div class="section-desc">If Yap isn’t working, run these three checks to see
+          exactly where the problem is. Each test is independent.</div>
+
+        <div class="diag-card" id="diag-mic">
+          <h3>1 · Microphone</h3>
+          <div class="help">Records about 3 seconds from your selected microphone
+            (<b id="diag-mic-device">Default (system)</b>) and checks that sound comes through.</div>
+          <div class="diag-row">
+            <button class="btn" id="diag-mic-btn">Test microphone</button>
+            <div class="diag-status" id="diag-mic-status">Not tested yet.</div>
+          </div>
+          <div class="meter"><span id="diag-mic-meter"></span></div>
+        </div>
+
+        <div class="diag-card" id="diag-hotkey">
+          <h3>2 · Recording hotkey</h3>
+          <div class="help">Checks that Yap can see your shortcut (needs Input
+            Monitoring). After you press <b>Test hotkey</b>, hold Right Option (⌥) and
+            tap an arrow for a voice button.</div>
+          <div class="diag-row">
+            <button class="btn" id="diag-hotkey-btn">Test hotkey</button>
+            <div class="diag-status" id="diag-hotkey-status">Not tested yet.</div>
+          </div>
+        </div>
+
+        <div class="diag-card" id="diag-api">
+          <h3>3 · AI connection</h3>
+          <div class="help">Sends one tiny request to your selected provider and model
+            using the saved key, to confirm the key and model work.</div>
+          <div class="diag-row">
+            <button class="btn" id="diag-api-btn">Test connection</button>
+            <div class="diag-status" id="diag-api-status">Not tested yet.</div>
+          </div>
         </div>
       </section>
 

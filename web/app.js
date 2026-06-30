@@ -278,7 +278,7 @@ window.yapInit = function (cfg) {
   CONFIG = cfg || CONFIG;
   if (!CONFIG.modes) CONFIG.modes = [];
   normalizeConfig();
-  if (isSettings()) { renderModes(); fillVoice(); fillRecording(); }
+  if (isSettings()) { renderModes(); fillVoice(); fillRecording(); fillDiagnostics(); }
 };
 window.yapSaved = function (ok, msg) { if (!ok && msg) banner(msg); };
 
@@ -330,8 +330,75 @@ function initSettings() {
       if (f) f.type = (f.type === "password") ? "text" : "password";
     });
   });
+  wireDiagnostics();
   send("ready");
 }
+
+/* ========================= TEST & DIAGNOSTICS ======================= */
+
+// Each test is independent: click → ask Python to run it → Python pushes back
+// progress/result via window.yapDiag. Buttons disable themselves while running so
+// a test can't be double-started.
+function diagStart(test, btnId, statusId, running) {
+  var btn = document.getElementById(btnId);
+  var st = document.getElementById(statusId);
+  if (btn) btn.disabled = true;
+  if (st) { st.className = "diag-status run"; st.textContent = running; }
+  if (test === "mic") {
+    var m = document.getElementById("diag-mic-meter");
+    if (m) m.style.width = "0%";
+  }
+  send("diag_" + test);
+}
+
+function wireDiagnostics() {
+  var mic = document.getElementById("diag-mic-btn");
+  if (mic) mic.addEventListener("click", function () {
+    diagStart("mic", "diag-mic-btn", "diag-mic-status", "Listening… speak now (about 3 seconds).");
+  });
+  var hk = document.getElementById("diag-hotkey-btn");
+  if (hk) hk.addEventListener("click", function () {
+    diagStart("hotkey", "diag-hotkey-btn", "diag-hotkey-status",
+      "Now hold Right Option (⌥) and tap a voice-button arrow…");
+  });
+  var api = document.getElementById("diag-api-btn");
+  if (api) api.addEventListener("click", function () {
+    diagStart("api", "diag-api-btn", "diag-api-status", "Contacting the provider…");
+  });
+}
+
+// Show the currently-selected microphone name on the mic test card.
+function fillDiagnostics() {
+  var d = document.getElementById("diag-mic-device");
+  if (d) d.textContent = CONFIG.input_device || "Default (system)";
+}
+
+// Python → JS bridge for diagnostics results (see _diag_push / _run_diag).
+window.yapDiag = function (o) {
+  if (!o || !o.test) return;
+  if (o.test === "mic" && o.phase === "level") {
+    var m = document.getElementById("diag-mic-meter");
+    if (m) m.style.width = Math.min(100, Math.round((o.level || 0) * 140)) + "%";
+    return;
+  }
+  if (o.phase !== "done") return;
+  var ids = { mic: ["diag-mic-btn", "diag-mic-status"],
+              hotkey: ["diag-hotkey-btn", "diag-hotkey-status"],
+              api: ["diag-api-btn", "diag-api-status"] };
+  var pair = ids[o.test]; if (!pair) return;
+  var btn = document.getElementById(pair[0]);
+  var st = document.getElementById(pair[1]);
+  if (btn) btn.disabled = false;
+  if (st) {
+    st.className = "diag-status " + (o.ok ? "pass" : "fail");
+    st.innerHTML = "<span class='diag-badge'>" + (o.ok ? "✓ Pass" : "✗ Fail") +
+      "</span> — " + escapeHtml(o.msg || "");
+  }
+  if (o.test === "mic") {
+    var meter = document.getElementById("diag-mic-meter");
+    if (meter) meter.style.width = Math.min(100, Math.round((o.level || 0) * 140)) + "%";
+  }
+};
 
 /* =========================== ONBOARDING ============================= */
 

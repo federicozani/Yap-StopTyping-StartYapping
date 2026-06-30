@@ -695,6 +695,124 @@ class Recorder:
             wf.writeframes(audio.tobytes())
         return buf.getvalue()
 
+    def recent_peak(self):
+        """Peak |sample| of the most recently captured frame, normalized to 0–1.
+        Used by the Settings microphone test for a live input-level meter; returns
+        0.0 when nothing has been captured yet. Cheap and read-only."""
+        try:
+            frame = self._frames[-1]
+            if frame is None or frame.size == 0:
+                return 0.0
+            return float(np.abs(frame).max()) / 32768.0
+        except Exception:
+            return 0.0
+
+
+# Below this, audio is considered "silent" — typical room noise on a working mic
+# sits well above it, while a muted/absent input stays near zero.
+MIC_TEST_THRESHOLD = 0.015
+
+
+def _mic_permission_denied():
+    """True only if macOS reports the Microphone permission as explicitly denied.
+    Used to refine a failed mic test — not as a hard pre-gate, because the status
+    is unreliable for a non-bundled interpreter (it can read 'denied' even while
+    capture works)."""
+    try:
+        import permissions
+        return permissions.microphone_status() == "denied"
+    except Exception:
+        return False
+
+
+def diag_mic(device_name="", on_level=None, duration=3.0):
+    """Microphone diagnostic for Settings. Records ~`duration` seconds from the
+    selected input device and reports whether any sound was captured. Returns
+    (ok, peak, message). Never hangs: a fixed duration plus try/except guards.
+
+    `on_level(level)` (0–1), if given, is called ~10×/sec for a live meter.
+
+    We try to record FIRST and only consult the permission status to explain a
+    failure, so a flaky 'denied' reading can't produce a false negative."""
+    rec = Recorder()
+    try:
+        rec.start(device_name)
+    except Exception as e:
+        if _mic_permission_denied():
+            return (False, 0.0,
+                    "Microphone permission is off. Grant it in System Settings → "
+                    "Privacy & Security → Microphone, then quit and reopen Yap.")
+        return (False, 0.0,
+                "Couldn't open this microphone (" + _redact(str(e)) + "). "
+                "Pick a different input under Microphone, or check that one is "
+                "connected.")
+
+    peak = 0.0
+    try:
+        steps = max(1, int(duration / 0.1))
+        for _ in range(steps):
+            time.sleep(0.1)
+            lvl = rec.recent_peak()
+            if lvl > peak:
+                peak = lvl
+            if on_level is not None:
+                try:
+                    on_level(lvl)
+                except Exception:
+                    pass
+    finally:
+        try:
+            rec.stop()
+        except Exception:
+            pass
+
+    if peak >= MIC_TEST_THRESHOLD:
+        return (True, peak, "Audio detected — this microphone is working.")
+    # Opened fine but stayed silent: a denied permission delivers zeros, so name
+    # that explicitly; otherwise it's a muted/quiet/wrong input.
+    if _mic_permission_denied():
+        return (False, peak,
+                "No sound came through. Microphone permission is off — grant it in "
+                "System Settings → Privacy & Security → Microphone, then quit and "
+                "reopen Yap.")
+    return (False, peak,
+            "No sound detected. Speak while testing, raise the input volume, or "
+            "pick a different microphone above.")
+
+
+def diag_api(config):
+    """API-connection diagnostic for Settings. Sends one minimal request to the
+    currently selected provider + model with the saved key and reports
+    (ok, message). Fails fast (retries=1) and never leaks the key."""
+    provider, api_key, model = _active_provider(config)
+    pname = "OpenAI" if provider == "openai" else "Gemini"
+    if not api_key or api_key.startswith("PASTE_YOUR"):
+        return (False, "No " + pname + " API key set — paste one under "
+                "“Provider & model”.")
+    try:
+        rewrite("ping", "Reply with OK.", provider, api_key, model, retries=1)
+        return (True, "Connected to " + pname + " (" + model + ").")
+    except requests.HTTPError as e:
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        if status in (400, 401, 403):
+            msg = (pname + " rejected the request (HTTP " + str(status) + ") — "
+                   "usually a wrong/expired API key or a model your key can't use. "
+                   "Check the key and model.")
+        elif status == 404:
+            msg = ("Model “" + model + "” isn’t available on " + pname +
+                   " (HTTP 404). Pick a different model.")
+        elif status == 429:
+            msg = (pname + " is rate-limiting right now (HTTP 429). Wait a moment "
+                   "and try again.")
+        else:
+            msg = pname + " returned HTTP " + str(status) + "."
+        return (False, msg)
+    except requests.RequestException as e:
+        return (False, "Couldn’t reach " + pname + " — check your internet "
+                "connection. (" + _redact(str(e)) + ")")
+    except Exception as e:
+        return (False, "Unexpected error: " + _redact(str(e)))
+
 
 # ---------------------------------------------------------------------------
 # Pasting: copy text to clipboard, then simulate Cmd+V into the focused app.
@@ -812,6 +930,12 @@ class YapApp(rumps.App):
         # live and the next standalone Right Option tap should stop it".
         self._active_trigger_mode = "hold"
         self._toggle_armed = False
+        # Settings "Test hotkey" diagnostic: while _diag_hotkey_waiting is True,
+        # _on_press records the detected voice-mode gesture (without starting a
+        # real recording) and signals _diag_hotkey_event.
+        self._diag_hotkey_waiting = False
+        self._diag_hotkey_result = None
+        self._diag_hotkey_event = threading.Event()
         self.last_yap = ""        # most recent transcript (shown in the quick panel)
         self._record_start = None  # when the current recording began
         self._state = "idle"        # currently-applied menu-bar state (main thread)
@@ -1105,6 +1229,86 @@ class YapApp(rumps.App):
             except Exception:
                 log_exc("failed to save settings from web UI")
                 ctrl.eval_js("window.yapSaved && window.yapSaved(false);")
+        elif action == "diag_mic":
+            self._run_diag("mic", ctrl)
+        elif action == "diag_hotkey":
+            self._run_diag("hotkey", ctrl)
+        elif action == "diag_api":
+            self._run_diag("api", ctrl)
+
+    # ---- Settings → Test / Diagnostics ----------------------------------
+    def _diag_push(self, ctrl, obj):
+        """Send a diagnostics update to the Settings web view on the MAIN thread.
+        The tests run on a worker thread, but WKWebView JS must be evaluated on
+        the main thread — AppHelper.callAfter hops there (rumps relies on it too)."""
+        try:
+            from PyObjCTools import AppHelper
+            AppHelper.callAfter(ctrl.push_js, "yapDiag", obj)
+        except Exception:
+            try:
+                ctrl.push_js("yapDiag", obj)
+            except Exception:
+                pass
+
+    def _run_diag(self, which, ctrl):
+        """Run one diagnostic on a background thread so the 3-second mic capture
+        or a network call never freezes the Settings window or the menu bar."""
+        def work():
+            try:
+                if which == "mic":
+                    device = self.config.get("input_device", "") or ""
+                    label = device or "Default (system)"
+                    ok, peak, msg = diag_mic(
+                        device,
+                        on_level=lambda lvl: self._diag_push(
+                            ctrl, {"test": "mic", "phase": "level", "level": lvl}),
+                    )
+                    self._diag_push(ctrl, {"test": "mic", "phase": "done",
+                                           "ok": ok, "msg": msg, "level": peak,
+                                           "device": label})
+                elif which == "hotkey":
+                    ok, msg = self._diag_hotkey()
+                    self._diag_push(ctrl, {"test": "hotkey", "phase": "done",
+                                           "ok": ok, "msg": msg})
+                elif which == "api":
+                    ok, msg = diag_api(self.config)
+                    self._diag_push(ctrl, {"test": "api", "phase": "done",
+                                           "ok": ok, "msg": msg})
+            except Exception as e:
+                log_exc("diagnostic %r failed" % which)
+                self._diag_push(ctrl, {"test": which, "phase": "done", "ok": False,
+                                       "msg": "Test couldn't run: " + _redact(str(e))})
+        threading.Thread(target=work, daemon=True).start()
+
+    def _diag_hotkey(self, timeout=6.0):
+        """Wait up to `timeout` s for the user to press a voice recording hotkey,
+        reusing the live listener via the _diag_hotkey_waiting flag. Returns
+        (ok, message)."""
+        try:
+            import permissions
+            status = permissions.input_monitoring_status()
+        except Exception:
+            status = "unknown"
+        if status == "denied":
+            return (False, "Input Monitoring is off, so Yap can’t see your keys. "
+                    "Grant it in System Settings → Privacy & Security → Input "
+                    "Monitoring, then quit and reopen Yap.")
+        self._diag_hotkey_result = None
+        self._diag_hotkey_event.clear()
+        self._diag_hotkey_waiting = True
+        try:
+            got = self._diag_hotkey_event.wait(timeout)
+        finally:
+            self._diag_hotkey_waiting = False
+        if got and self._diag_hotkey_result:
+            return (True, "Detected your “" + self._diag_hotkey_result +
+                    "” button — the hotkey works.")
+        hint = ("Didn’t catch a hotkey. Hold Right Option (⌥) and tap an arrow "
+                "that’s assigned to a voice button.")
+        if status != "granted":
+            hint += (" If nothing is detected, grant Input Monitoring and quit "
+                     "and reopen Yap.")
+        return (False, hint)
 
     def _mark_onboarded(self):
         """Persist that the welcome flow has been completed, so it doesn't
@@ -1565,6 +1769,12 @@ class YapApp(rumps.App):
         self._maybe_reload()  # pick up any settings saved since last time
         mode = self.hotkey_map.get(arrow)
         if mode is None:
+            return
+        # Settings "Test hotkey" is listening: record that we saw a valid voice
+        # gesture and stop here — do NOT start a real recording during the test.
+        if self._diag_hotkey_waiting:
+            self._diag_hotkey_result = mode["name"]
+            self._diag_hotkey_event.set()
             return
         self.recording = True
         self.active_mode = mode
