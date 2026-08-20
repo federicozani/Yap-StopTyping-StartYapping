@@ -1034,6 +1034,11 @@ def diag_api(config):
     except requests.RequestException as e:
         return (False, "Couldn’t reach " + pname + " — check your internet "
                 "connection. (" + _redact(str(e)) + ")")
+    except OSError as e:
+        # Non-requests connection-level failure (e.g. a missing CA bundle after
+        # macOS purged the temp dir). Yap rebuilds the bundle on the next call.
+        return (False, "Couldn’t reach " + pname + " — connection problem. ("
+                + _redact(str(e))[:160] + ")")
     except Exception as e:
         return (False, "Unexpected error: " + _redact(str(e)))
 
@@ -2302,6 +2307,30 @@ if __name__ == "__main__":
             log(f"SELFTEST CA bundle: {b} exists={os.path.exists(b) if b else False}")
         except Exception:
             log_exc("SELFTEST CA bundle FAIL")
+        # Regression test for the bug that made Yap stop working until relaunch:
+        # simulate macOS purging the temp dir out from under certifi, then make a
+        # real HTTPS call. Reaching the server (any HTTP status) proves TLS still
+        # verified; the old build died here with OSError and lost the recording.
+        try:
+            import certifi as _c
+            tmp = _c.where()
+            purged = False
+            if "/var/folders/" in tmp and os.path.exists(tmp):
+                os.remove(tmp)
+                purged = True
+            log(f"SELFTEST simulated temp-dir purge: removed={purged} ({tmp})")
+            try:
+                transcribe(b"RIFF....", "hi", "gemini", "dummy-key",
+                           "gemini-3.1-flash-lite", retries=1)
+                log("SELFTEST post-purge HTTPS: reached server (no exception)")
+            except requests.HTTPError as e:
+                log(f"SELFTEST post-purge HTTPS: OK — reached server "
+                    f"({e.response.status_code}), TLS verified after purge")
+            except Exception as e:
+                log(f"SELFTEST post-purge HTTPS: FAIL — {e.__class__.__name__}: "
+                    f"{_redact(str(e))[:120]}")
+        except Exception:
+            log_exc("SELFTEST purge simulation FAIL")
         # Recording safety net: save, then discard, leaving nothing behind.
         try:
             f = _save_recording(b"RIFF" + b"\0" * 2000)
@@ -2311,6 +2340,42 @@ if __name__ == "__main__":
             _sweep_old_recordings()
         except Exception:
             log_exc("SELFTEST recording FAIL")
+        # Opt-in live round-trip: real recording -> provider -> clipboard, and
+        # real selection -> provider -> clipboard, checking accents survive the
+        # whole way. Off by default because it spends API credit.
+        if os.environ.get("YAP_SELFTEST_E2E") == "1":
+            try:
+                import wave as _wave
+                cfg = load_config()
+                prov, key, mdl = _active_provider(cfg)
+                clip = os.environ.get("YAP_SELFTEST_WAV", "")
+                if clip and os.path.exists(clip):
+                    with _wave.open(clip, "rb") as w:
+                        frames = w.readframes(w.getnframes())
+                    buf = io.BytesIO()
+                    with _wave.open(buf, "wb") as o:
+                        o.setnchannels(CHANNELS); o.setsampwidth(2)
+                        o.setframerate(SAMPLE_RATE); o.writeframes(frames)
+                    said = transcribe(
+                        buf.getvalue(),
+                        "Transcribe exactly as spoken. Output only the transcript.",
+                        prov, key, mdl)
+                    set_clipboard(said)
+                    got = get_clipboard()
+                    log(f"SELFTEST E2E voice: transcript={said!r} "
+                        f"clipboard={got!r} exact={got == said} "
+                        f"mojibake={'√' in got}")
+                fixed = rewrite(
+                    "questo esempio e cosi, perche e gia cosi",
+                    "Fix the Italian accents. Output only the corrected text.",
+                    prov, key, mdl)
+                set_clipboard(fixed)
+                got = get_clipboard()
+                log(f"SELFTEST E2E rewrite: result={fixed!r} "
+                    f"clipboard={got!r} exact={got == fixed} "
+                    f"mojibake={'√' in got}")
+            except Exception:
+                log_exc("SELFTEST E2E FAIL")
         log("SELFTEST done")
         sys.exit(0)
     log("starting. Hold Right Option (⌥) and speak. Watch these lines while you test.")
