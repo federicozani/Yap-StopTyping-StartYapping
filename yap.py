@@ -47,6 +47,23 @@ try:
 except Exception:
     Quartz = None
 
+# certifi ships the CA bundle that HTTPS verification needs. See ca_bundle()
+# below for why we copy it out of certifi's control at startup.
+try:
+    import certifi
+except Exception:
+    certifi = None
+
+# NSWorkspace lets us hear "the Mac just woke up" so the first recording after
+# a sleep works without a relaunch. Guarded like Quartz: no PyObjC, no observer,
+# app still runs.
+try:
+    from AppKit import NSWorkspace
+    from Foundation import NSObject
+except Exception:
+    NSWorkspace = None
+    NSObject = None
+
 
 def log(*a):
     # Prints to the Terminal so we can see what the app is doing, AND appends to
@@ -102,6 +119,19 @@ def notify(title, subtitle, message=""):
 CONFIG_DIR = Path.home() / ".yap"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_PATH = CONFIG_DIR / "yap.log"
+
+# Safety net for recordings: every clip is written here BEFORE it is sent, and
+# deleted the moment the model answers. Only clips whose upload failed outright
+# survive, so nothing is ever silently dropped. This lives under ~/.yap (private
+# to this user, mode 0700) rather than the system temp dir precisely BECAUSE
+# macOS periodically purges the temp dir — the same purge that breaks the CA
+# bundle (see ca_bundle()). Leftovers are swept at startup after 24 hours.
+RECORDINGS_DIR = CONFIG_DIR / "recordings"
+RECORDING_KEEP_SECONDS = 24 * 60 * 60
+
+# The CA bundle Yap verifies HTTPS against, copied to a stable path (see
+# ca_bundle()).
+CA_BUNDLE_PATH = CONFIG_DIR / "cacert.pem"
 
 # The app used to be called "Parla". On first run we migrate the old settings
 # (including the saved API key) and log from ~/.parla so nothing is lost.
@@ -466,51 +496,186 @@ def load_config():
 # because the model was briefly busy.
 # ---------------------------------------------------------------------------
 
+# --- HTTPS plumbing -------------------------------------------------------
+#
+# Why we keep our own copy of the CA bundle:
+#
+# Inside the py2app bundle, certifi's cacert.pem lives in the zipped
+# site-packages, so certifi.where() EXTRACTS it to a throwaway file in the
+# per-user temp dir (/var/folders/…/T/tmpXXXXcacert.pem) and then caches that
+# path for the whole life of the process. macOS periodically purges that
+# directory. When it does, the path certifi remembers no longer exists, and
+# every single HTTPS call fails INSTANTLY with
+#     OSError: Could not find a suitable TLS CA certificate bundle
+# and keeps failing until the app is relaunched (a fresh launch re-extracts it).
+# That is the real reason a long-running Yap stops reaching Gemini after a
+# sleep/wake cycle and only a quit-and-reopen brings it back.
+#
+# So: copy the bundle once into ~/.yap/cacert.pem — a location macOS never
+# cleans — and verify against that. If it ever goes missing we rebuild it in
+# place, so the app heals itself instead of needing a restart.
+
+def _refresh_ca_bundle(force: bool = False) -> str:
+    """Make sure ~/.yap/cacert.pem exists and return its path (or "" if we
+    could not produce one, in which case requests falls back to its default)."""
+    try:
+        if force or not CA_BUNDLE_PATH.exists() or CA_BUNDLE_PATH.stat().st_size < 1000:
+            if certifi is None:
+                return ""
+            src = certifi.where()
+            if not os.path.exists(src):
+                # certifi's own cached temp copy is gone too; nothing to copy.
+                log("CA bundle: certifi source missing at", src)
+                return ""
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, str(CA_BUNDLE_PATH))
+            log(f"CA bundle refreshed → {CA_BUNDLE_PATH}")
+        return str(CA_BUNDLE_PATH)
+    except Exception:
+        log_exc("CA bundle refresh failed")
+        return ""
+
+
+def ca_bundle():
+    """Path to verify HTTPS against for this request. Cheap existence check on
+    every call so a purged bundle is rebuilt before it can break anything."""
+    return _refresh_ca_bundle() or True  # True = requests' built-in default
+
+
+# --- wake from sleep ------------------------------------------------------
+# When the Mac wakes, sockets Yap was holding are dead and the temp CA file may
+# have been purged while it slept. Rebuilding the CA bundle here means the FIRST
+# recording after wake works, instead of failing and needing a quit-and-reopen.
+if NSObject is not None:
+    class _YapWakeObserver(NSObject):
+        def handleWake_(self, _note):
+            try:
+                log("system woke from sleep — refreshing network state")
+                _refresh_ca_bundle(force=True)
+            except Exception:
+                log_exc("wake handler failed")
+else:
+    _YapWakeObserver = None
+
+
+# --- retry/backoff tuning -------------------------------------------------
+# The old settings (12 attempts, 2,4,6,8…s waits) could add ~2 minutes of pure
+# waiting to a single recording. Real blips are short, so: fewer attempts, much
+# shorter waits, and a hard cap on the total time backoff may ever add.
+MAX_ATTEMPTS = 6
+BACKOFF_SECONDS = [0.4, 0.8, 1.5, 3.0, 5.0]
+MAX_TOTAL_BACKOFF = 12.0
+# Split timeouts. A short CONNECT timeout means a socket left dead by sleep
+# fails fast and we retry, instead of hanging for a minute. The READ timeout is
+# per-socket-operation (not total), and has to cover uploading a long recording.
+CONNECT_TIMEOUT = 8
+READ_TIMEOUT = 120
+
+
 def _post_with_retry(url: str, headers: dict, body: dict, parse_fn,
-                     retries: int = 12, label: str = "LLM") -> str:
+                     retries: int = MAX_ATTEMPTS, label: str = "LLM") -> str:
     """POST `body` to `url` and return the text pulled out by `parse_fn(json)`.
 
-    Retries automatically on transient "busy" errors (429/500/503), which
-    providers return when the model is temporarily overloaded. Shared by the
-    audio (transcribe) and text (rewrite) paths and by both providers so they
-    use the same backoff and logging. 12 attempts with a 2,4,6…s backoff
-    (~2 min worst case) so a recording is never lost to a brief blip.
+    Retries on BOTH kinds of transient failure:
+      * provider "busy" replies (429/500/503), and
+      * connection-level errors — dropped/dead sockets, DNS hiccups, timeouts,
+        a purged CA bundle — which is what a sleep/wake cycle produces. These
+        used to escape as a hard error and lose the recording.
+
+    Every attempt opens a BRAND-NEW connection (fresh Session + `Connection:
+    close`) so we can never reuse a keep-alive socket that died while the Mac
+    was asleep.
+
+    Logs the wall-clock duration, attempt count and total backoff of every call,
+    so the log shows at a glance whether a slow yap was our retry waiting or the
+    provider's own latency.
     """
     last_resp = None
+    last_exc = None
+    slept = 0.0
+    started = time.time()
+
+    def _wait(attempt, why):
+        """Sleep before the next attempt; returns False if we're done retrying."""
+        nonlocal slept
+        if attempt >= retries - 1 or slept >= MAX_TOTAL_BACKOFF:
+            return False
+        wait = min(BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)],
+                   MAX_TOTAL_BACKOFF - slept)
+        log(f"{label} {why}; retrying in {wait:.1f}s "
+            f"(attempt {attempt + 1}/{retries})…")
+        time.sleep(wait)
+        slept += wait
+        return True
+
     for attempt in range(retries):
-        resp = requests.post(url, headers=headers, json=body, timeout=60)
+        try:
+            # A new Session per attempt — no pooled sockets survive between
+            # calls, so a connection killed by sleep can never be reused.
+            with requests.Session() as sess:
+                resp = sess.post(url,
+                                 headers=dict(headers, **{"Connection": "close"}),
+                                 json=body,
+                                 timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                                 verify=ca_bundle())
+        except OSError as e:
+            # Covers requests' ConnectionError/Timeout/SSLError (all subclass
+            # OSError) and the bare OSError from a missing CA bundle.
+            last_exc = e
+            log(f"{label} connection problem: {e.__class__.__name__}: "
+                f"{_redact(str(e))[:200]}")
+            # If the bundle was purged, rebuild it here so the very next
+            # attempt succeeds — no restart needed. (Not forced: rewriting a
+            # perfectly good 230KB file on every retry is just noise.)
+            _refresh_ca_bundle()
+            if _wait(attempt, "connection failed"):
+                continue
+            break
         if resp.status_code in (429, 500, 503):
             last_resp = resp
-            if attempt < retries - 1:  # don't wait after the final attempt
-                wait = 2 * (attempt + 1)
-                log(f"{label} busy ({resp.status_code}); retrying in {wait}s "
-                    f"(attempt {attempt + 1}/{retries})…")
-                time.sleep(wait)
-            continue
+            last_exc = None
+            if _wait(attempt, f"busy ({resp.status_code})"):
+                continue
+            break
         resp.raise_for_status()
-        return parse_fn(resp.json())
-    # Ran out of retries: surface the last busy error.
+        text = parse_fn(resp.json())
+        log(f"{label} OK in {time.time() - started:.1f}s "
+            f"({attempt + 1} attempt{'s' if attempt else ''}, "
+            f"{slept:.1f}s of that waiting to retry)")
+        return text
+
+    log(f"{label} FAILED after {time.time() - started:.1f}s "
+        f"({retries} attempts, {slept:.1f}s of that waiting to retry)")
+    if last_exc is not None:
+        raise last_exc
     if last_resp is not None:
         last_resp.raise_for_status()
     return ""
 
 
 def _gemini_call(parts: list, api_key: str, model: str,
-                 retries: int = 12) -> str:
+                 retries: int = MAX_ATTEMPTS) -> str:
     """One Gemini generateContent call. `parts` is the list of content parts
     (text and, for audio, an inline_data part)."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
     body = {"contents": [{"parts": parts}]}
-    # Pull the text out of the first candidate's first part.
-    return _post_with_retry(
-        url, headers, body,
-        lambda d: d["candidates"][0]["content"]["parts"][0]["text"].strip(),
-        retries, label="Gemini")
+
+    def _parse(d):
+        # Gemini echoes the model that actually served the call. Log it whenever
+        # it isn't the one we asked for, so a silent fallback to a slower model
+        # can never hide behind "the API was slow today".
+        served = (d.get("modelVersion") or "").strip()
+        if served and served != model:
+            log(f"Gemini model: asked for {model!r}, served by {served!r}")
+        # Pull the text out of the first candidate's first part.
+        return d["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+    return _post_with_retry(url, headers, body, _parse, retries, label="Gemini")
 
 
 def _openai_call(messages: list, api_key: str, model: str,
-                 retries: int = 12, audio: bool = False) -> str:
+                 retries: int = MAX_ATTEMPTS, audio: bool = False) -> str:
     """One OpenAI chat-completions call. `messages` is the chat messages list;
     set `audio=True` when a message carries an input_audio part, so the model
     is told to answer with text."""
@@ -526,7 +691,7 @@ def _openai_call(messages: list, api_key: str, model: str,
 
 
 def transcribe(wav_bytes: bytes, prompt: str, provider: str, api_key: str,
-               model: str, retries: int = 12) -> str:
+               model: str, retries: int = MAX_ATTEMPTS) -> str:
     """Send WAV audio + an instruction to the chosen provider in a single
     native call and return the finished text. Only audio-capable models work
     here (all Gemini models; OpenAI's gpt-4o-*-audio-preview chat models)."""
@@ -547,7 +712,7 @@ def transcribe(wav_bytes: bytes, prompt: str, provider: str, api_key: str,
 
 
 def rewrite(text: str, prompt: str, provider: str, api_key: str,
-            model: str, retries: int = 12) -> str:
+            model: str, retries: int = MAX_ATTEMPTS) -> str:
     """Send selected text + an instruction to the chosen provider as a plain
     text request (no audio) and return the rewritten result. Reuses the same
     retry/backoff and logging as the audio path."""
@@ -557,6 +722,63 @@ def rewrite(text: str, prompt: str, provider: str, api_key: str,
         return _openai_call(messages, api_key, model, retries)
     # Gemini (default for any unknown provider).
     return _gemini_call([{"text": combined}], api_key, model, retries)
+
+
+# ---------------------------------------------------------------------------
+# Recording safety net: no clip is ever lost to a failed upload.
+# ---------------------------------------------------------------------------
+
+def _save_recording(wav_bytes: bytes):
+    """Write a clip to ~/.yap/recordings/ BEFORE we try to send it, and return
+    the path (or None if we couldn't). The directory is this user's only —
+    created 0700 — and never lives in the shared/system temp dir."""
+    try:
+        RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(RECORDINGS_DIR, 0o700)
+        path = RECORDINGS_DIR / time.strftime("yap-%Y%m%d-%H%M%S.wav")
+        n = 1
+        while path.exists():  # two clips in the same second
+            path = RECORDINGS_DIR / time.strftime(f"yap-%Y%m%d-%H%M%S-{n}.wav")
+            n += 1
+        with open(path, "wb") as f:
+            f.write(wav_bytes)
+        os.chmod(path, 0o600)
+        return path
+    except Exception:
+        log_exc("could not save recording safety copy")
+        return None
+
+
+def _discard_recording(path):
+    """Delete the safety copy — called the moment the model returns text, so a
+    successful yap leaves nothing behind on disk."""
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except Exception:
+        log_exc("could not remove recording safety copy")
+
+
+def _sweep_old_recordings():
+    """At startup, delete safety copies older than 24 hours so recordings from
+    failed uploads can never pile up."""
+    try:
+        if not RECORDINGS_DIR.is_dir():
+            return
+        cutoff = time.time() - RECORDING_KEEP_SECONDS
+        removed = 0
+        for f in RECORDINGS_DIR.glob("yap-*.wav"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink()
+                    removed += 1
+            except Exception:
+                pass
+        if removed:
+            log(f"cleaned up {removed} recording(s) older than 24h")
+    except Exception:
+        log_exc("recording cleanup failed")
 
 
 def _active_provider(config: dict):
@@ -947,10 +1169,31 @@ class YapApp(rumps.App):
 
         self._build_menu()
         self._start_listener()
+        # Pin the CA bundle to ~/.yap up front (see ca_bundle()), clear out any
+        # recordings a previous failed upload left behind, and listen for wake.
+        _refresh_ca_bundle()
+        _sweep_old_recordings()
+        self._wake_observer = None
+        self._install_wake_observer()
         # Ticks 4x/second on the main thread: applies pending icon changes (so
         # the busy icon shows promptly) and updates the recording countdown.
         self._timer = rumps.Timer(self._tick, 0.25)
         self._timer.start()
+
+    def _install_wake_observer(self):
+        """Ask NSWorkspace to tell us when the Mac wakes from sleep."""
+        if _YapWakeObserver is None or NSWorkspace is None:
+            log("wake observer unavailable (no PyObjC) — skipping")
+            return
+        try:
+            obs = _YapWakeObserver.alloc().init()
+            NSWorkspace.sharedWorkspace().notificationCenter() \
+                .addObserver_selector_name_object_(
+                    obs, b"handleWake:", "NSWorkspaceDidWakeNotification", None)
+            self._wake_observer = obs  # keep a strong ref or it's deallocated
+            log("wake-from-sleep observer installed")
+        except Exception:
+            log_exc("could not install wake observer")
 
     # ----- menu-bar lifecycle state --------------------------------------
 
@@ -1849,6 +2092,7 @@ class YapApp(rumps.App):
 
     def _process(self, wav_bytes, mode):
         delivered = False  # set when text was pasted, so we show the "done" check
+        saved = None       # safety copy on disk; cleared once we no longer need it
         try:
             # Ignore accidental taps (less than ~0.3s of audio).
             if len(wav_bytes) < SAMPLE_RATE * 2 * 0.3:
@@ -1861,6 +2105,9 @@ class YapApp(rumps.App):
                 notify("Yap", f"No {name} API key set",
                        f"Open Settings and paste your {name} API key.")
                 return
+            # Park the audio on disk BEFORE the network call, so a failed upload
+            # can never take the recording with it.
+            saved = _save_recording(wav_bytes)
             log(f"sending to {provider} ({model})…")
             text = transcribe(wav_bytes, mode["prompt"], provider, api_key, model)
             # Log only the length, never the content — the transcript/rewrite
@@ -1872,16 +2119,28 @@ class YapApp(rumps.App):
                 self.last_yap = text
                 self._set_state("done")  # brief green check, then auto-revert to idle
                 delivered = True
+                # Transcribed and delivered: drop the safety copy immediately.
+                _discard_recording(saved)
+                saved = None
             else:
                 log("model returned empty text.")
         except requests.HTTPError as e:
             body = _redact(getattr(e.response, "text", "")[:400])
             log("model HTTP error:", _redact(str(e)), body)
             notify("Yap", "Model busy, try again", "The model was overloaded.")
+        except OSError as e:
+            # Connection died / timed out even after every retry.
+            log("model connection error:", _redact(str(e))[:300])
         except Exception as e:
             log_exc("ERROR in _process")
             notify("Yap", "Something went wrong", str(e))
         finally:
+            if saved is not None:
+                # We got here without delivering text — keep the audio and say
+                # so out loud, instead of dropping it silently.
+                log(f"RECORDING KEPT (not transcribed): {saved}")
+                notify("Yap", "Couldn't reach the model — recording saved",
+                       f"Your audio is safe in {saved.parent}. Try again in a moment.")
             if not delivered:
                 self._set_state("idle")
 
