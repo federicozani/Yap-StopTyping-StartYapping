@@ -1219,6 +1219,14 @@ class YapApp(rumps.App):
         # recordings a previous failed upload left behind, and listen for wake.
         _refresh_ca_bundle()
         _sweep_old_recordings()
+        try:
+            import permissions as _perm
+            log("permissions — microphone: %s | input monitoring: %s | "
+                "accessibility: %s"
+                % (_perm.microphone_status(), _perm.input_monitoring_status(),
+                   _perm.accessibility_status()))
+        except Exception:
+            log_exc("could not read permission status")
         self._wake_observer = None
         self._install_wake_observer()
         # Ticks 4x/second on the main thread: applies pending icon changes (so
@@ -1277,6 +1285,8 @@ class YapApp(rumps.App):
         # panel (left-click) and keep the full menu on right/Control-click.
         if not self._click_installed:
             self._install_icon_click()
+        # Keep the rewrite chord alive (see _suppressor_check).
+        self._suppressor_check()
         # Until onboarding is complete, greet the user with the welcome window
         # once the app's run loop is up (doing it here keeps it on the main
         # thread). Cleared immediately so it only opens once per launch.
@@ -1969,16 +1979,71 @@ class YapApp(rumps.App):
         # that if Accessibility isn't granted (tap fails to create) the voice
         # listener above keeps working regardless.
         self._suppressor = None
-        if Quartz is not None:
-            try:
-                self._suppressor = keyboard.Listener(
-                    on_press=lambda k: None, on_release=lambda k: None,
-                    darwin_intercept=self._intercept)
-                self._suppressor.daemon = True
-                self._suppressor.start()
-            except Exception:
-                log_exc("text-rewrite suppressor tap could not start "
-                        "(needs Accessibility) — voice still works")
+        self._suppressor_warned = False
+        self._suppressor_next_try = 0.0
+        if self._start_suppressor():
+            log("text-rewrite chord ACTIVE (Right ⌘ + Right ⌥ + arrow)")
+        else:
+            log("text-rewrite chord INACTIVE — needs Accessibility. Grant it in "
+                "System Settings → Privacy & Security → Accessibility; Yap picks "
+                "it up within a few seconds, no restart needed.")
+
+    def _start_suppressor(self):
+        """Create the ACTIVE event tap that powers the text-rewrite chord.
+
+        This tap SUPPRESSES the arrow key, which macOS only permits with
+        Accessibility — and it decides that when the tap is created, i.e. at
+        launch. So granting Accessibility while Yap is already running leaves
+        this tap dead even though pasting (checked per call) works fine: voice
+        keeps working and only rewrite is broken.
+
+        pynput signals the failure by quietly returning from its thread
+        (_util/darwin.py: `if tap is None: self._mark_ready(); return`) — no
+        exception — so the only way to detect it is to check the thread is still
+        alive afterwards. Returns True if the tap is live.
+        """
+        if Quartz is None:
+            return False
+        try:
+            sup = keyboard.Listener(on_press=lambda k: None,
+                                    on_release=lambda k: None,
+                                    darwin_intercept=self._intercept)
+            sup.daemon = True
+            sup.start()
+            sup.wait()          # returns once the tap is up — or has given up
+            time.sleep(0.03)    # let a failed thread finish exiting
+            if not sup.is_alive():
+                return False
+            self._suppressor = sup
+            return True
+        except Exception:
+            log_exc("text-rewrite suppressor tap could not start")
+            return False
+
+    def _suppressor_check(self):
+        """Retry the rewrite tap while it's down, so granting Accessibility
+        later starts working without quitting and reopening Yap. Called from
+        _tick; cheap, and does nothing once the tap is alive."""
+        if Quartz is None:
+            return
+        now = time.time()
+        if now < self._suppressor_next_try:
+            return
+        self._suppressor_next_try = now + 3.0
+        if self._suppressor is not None and self._suppressor.is_alive():
+            return
+        try:
+            import permissions
+            if permissions.accessibility_status() != "granted":
+                if not self._suppressor_warned:
+                    log("text-rewrite chord inactive: Accessibility not granted")
+                    self._suppressor_warned = True
+                return
+        except Exception:
+            return
+        if self._start_suppressor():
+            log("text-rewrite chord is now ACTIVE (Accessibility granted)")
+            self._suppressor_warned = False
 
     def _intercept(self, event_type, event):
         """Event-tap filter for the dedicated suppressor tap (macOS). Return None
