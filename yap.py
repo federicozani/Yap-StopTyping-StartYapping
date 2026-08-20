@@ -58,11 +58,13 @@ except Exception:
 # a sleep works without a relaunch. Guarded like Quartz: no PyObjC, no observer,
 # app still runs.
 try:
-    from AppKit import NSWorkspace
+    from AppKit import NSWorkspace, NSPasteboard, NSPasteboardTypeString
     from Foundation import NSObject
 except Exception:
     NSWorkspace = None
     NSObject = None
+    NSPasteboard = None
+    NSPasteboardTypeString = None
 
 
 def log(*a):
@@ -1067,9 +1069,55 @@ def _send_cmd(letter):
             _kbd.release(letter)
 
 
+# The clipboard is written through the NATIVE pasteboard, never by piping bytes
+# to pbcopy. Reason: pbcopy decodes its stdin using the current locale's
+# encoding, and a double-clicked .app inherits no LANG at all — so it fell back
+# to MacRoman and turned the UTF-8 bytes of "è" (C3 A8) into "√®". Handing
+# AppKit a real Unicode string means the encoding is never guessed.
+_UTF8_ENV = dict(os.environ, LANG="en_US.UTF-8", LC_ALL="en_US.UTF-8")
+
+
+def set_clipboard(text: str) -> bool:
+    """Put `text` on the macOS clipboard as proper Unicode. True if it stuck."""
+    if NSPasteboard is not None:
+        try:
+            pb = NSPasteboard.generalPasteboard()
+            pb.clearContents()
+            if pb.setString_forType_(text, NSPasteboardTypeString):
+                return True
+            log("NSPasteboard refused the string; falling back to pbcopy")
+        except Exception:
+            log_exc("NSPasteboard write failed; falling back to pbcopy")
+    # Fallback only. Forcing a UTF-8 locale is what keeps accents intact here.
+    try:
+        subprocess.run("pbcopy", input=text.encode("utf-8"), check=True,
+                       env=_UTF8_ENV)
+        return True
+    except Exception:
+        log_exc("pbcopy failed")
+        return False
+
+
+def get_clipboard() -> str:
+    """Read the macOS clipboard as text (Unicode-safe, same reasoning)."""
+    if NSPasteboard is not None:
+        try:
+            val = NSPasteboard.generalPasteboard().stringForType_(
+                NSPasteboardTypeString)
+            return "" if val is None else str(val)
+        except Exception:
+            log_exc("NSPasteboard read failed; falling back to pbpaste")
+    try:
+        out = subprocess.run("pbpaste", capture_output=True, check=True,
+                             env=_UTF8_ENV).stdout
+        return out.decode("utf-8", errors="replace")
+    except Exception:
+        log_exc("pbpaste failed")
+        return ""
+
+
 def paste_text(text: str):
-    # pbcopy puts the text on the macOS clipboard (built in, no extra package).
-    subprocess.run("pbcopy", input=text.encode("utf-8"), check=True)
+    set_clipboard(text)
     time.sleep(0.15)  # give the clipboard a moment, and let the hotkey fully release
     _send_cmd("v")
 
@@ -1083,19 +1131,12 @@ def copy_selection() -> str:
     sentinel survives and we return "" so the caller can quietly do nothing.
     """
     sentinel = "\x00yap-no-selection\x00"
-    try:
-        subprocess.run("pbcopy", input=sentinel.encode("utf-8"), check=True)
-    except Exception:
-        log_exc("copy_selection: failed to seed clipboard sentinel")
+    if not set_clipboard(sentinel):
+        log("copy_selection: failed to seed clipboard sentinel")
     time.sleep(0.05)
     _send_cmd("c")
     time.sleep(0.2)  # give the frontmost app time to write its selection out
-    try:
-        out = subprocess.run("pbpaste", capture_output=True, check=True).stdout
-    except Exception:
-        log_exc("copy_selection: pbpaste failed")
-        return ""
-    text = out.decode("utf-8", errors="replace")
+    text = get_clipboard()
     return "" if text == sentinel else text
 
 
@@ -1833,7 +1874,7 @@ class YapApp(rumps.App):
         elif action == "copyLast":
             if self.last_yap:
                 try:
-                    subprocess.run("pbcopy", input=self.last_yap.encode("utf-8"), check=True)
+                    set_clipboard(self.last_yap)
                     log("copied last yap to clipboard from quick panel")
                 except Exception:
                     log_exc("copyLast failed")
@@ -2232,11 +2273,44 @@ if __name__ == "__main__":
         # the text-mode chord letter lookup (vk 15 = R on macOS)
         log("SELFTEST chord_letter(vk=15) ->",
             chord_letter(keyboard.KeyCode(vk=15, char="r")))
-        # paste mechanism (pbcopy + pynput Cmd+V)
+        # Clipboard: the accented-text path that used to come out as mojibake
+        # ("è" -> "√®") because pbcopy guessed MacRoman with no LANG set.
+        sample = "Questo esempio è così"
         try:
-            paste_text("yap-selftest"); log("SELFTEST paste OK")
-        except Exception as e:
-            log_exc("SELFTEST paste FAIL")
+            set_clipboard(sample)
+            got = get_clipboard()
+            log(f"SELFTEST clipboard round-trip: "
+                f"{'OK' if got == sample else 'FAIL'} — got {got!r}")
+        except Exception:
+            log_exc("SELFTEST clipboard FAIL")
+        # The actual Cmd+V keystroke is opt-in: it types into whatever app is
+        # frontmost, which is rude to do on every self-test run.
+        if os.environ.get("YAP_SELFTEST_PASTE") == "1":
+            try:
+                paste_text(sample); log("SELFTEST paste OK")
+            except Exception:
+                log_exc("SELFTEST paste FAIL")
+        # CA bundle: must resolve to our stable ~/.yap copy, NOT a path in the
+        # purgeable temp dir (the cause of "works again only after a restart").
+        try:
+            import certifi as _c
+            log("SELFTEST certifi.where() ->", _c.where())
+        except Exception:
+            log("SELFTEST certifi unavailable")
+        try:
+            b = _refresh_ca_bundle(force=True)
+            log(f"SELFTEST CA bundle: {b} exists={os.path.exists(b) if b else False}")
+        except Exception:
+            log_exc("SELFTEST CA bundle FAIL")
+        # Recording safety net: save, then discard, leaving nothing behind.
+        try:
+            f = _save_recording(b"RIFF" + b"\0" * 2000)
+            log(f"SELFTEST recording saved: {f} exists={f and f.exists()}")
+            _discard_recording(f)
+            log(f"SELFTEST recording discarded: exists={f and f.exists()}")
+            _sweep_old_recordings()
+        except Exception:
+            log_exc("SELFTEST recording FAIL")
         log("SELFTEST done")
         sys.exit(0)
     log("starting. Hold Right Option (⌥) and speak. Watch these lines while you test.")
