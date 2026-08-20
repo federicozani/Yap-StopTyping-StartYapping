@@ -2108,7 +2108,12 @@ class YapApp(rumps.App):
             # Park the audio on disk BEFORE the network call, so a failed upload
             # can never take the recording with it.
             saved = _save_recording(wav_bytes)
-            log(f"sending to {provider} ({model})…")
+            # Size is logged next to the timing so slow yaps can be told apart
+            # at a glance: a big clip is upload time, a small slow one is the
+            # provider's own latency.
+            log(f"sending to {provider} ({model})… "
+                f"{len(wav_bytes) / 1e6:.1f}MB audio "
+                f"({len(wav_bytes) / (SAMPLE_RATE * 2):.0f}s)")
             text = transcribe(wav_bytes, mode["prompt"], provider, api_key, model)
             # Log only the length, never the content — the transcript/rewrite
             # is the user's private text and must not be persisted to the log.
