@@ -101,6 +101,68 @@ OPTIONS = {
     "frameworks": _find_rpath_dylibs(),
 }
 
+# ---------------------------------------------------------------------------
+# Keep macOS permissions working across rebuilds.
+#
+# py2app leaves the bundle AD-HOC signed, and an ad-hoc signature's "designated
+# requirement" — the identity macOS remembers when you grant a permission — is
+# the bundle's CONTENT HASH. It changes on every rebuild, so macOS treats each
+# build as a different app and quietly stops honouring Input Monitoring and
+# Accessibility: the toggles still read ON in System Settings while the hotkey
+# silently does nothing, and only `tccutil reset` + re-granting fixes it.
+#
+# Re-signing with a stable self-signed certificate makes the designated
+# requirement `identifier "com.yap.app" and certificate root = H"…"`, which is
+# identical for every future build — so the permissions survive.
+#
+# Create the certificate once:  tools/make_signing_cert.sh
+# If it isn't there, we leave the ad-hoc signature alone and just warn.
+# ---------------------------------------------------------------------------
+
+SIGN_CERT_NAME = "Yap Local Dev"
+SIGN_KEYCHAIN = os.path.expanduser("~/Library/Keychains/yap-signing.keychain-db")
+
+
+def _codesign_bundle():
+    import subprocess
+
+    app = os.path.join("dist", "Yap.app")
+    if not os.path.isdir(app):
+        return
+    if not os.path.exists(SIGN_KEYCHAIN):
+        print("\n*** WARNING: no signing keychain — the app stays ad-hoc signed,\n"
+              "*** so macOS will drop Input Monitoring/Accessibility after this\n"
+              "*** build. Run tools/make_signing_cert.sh once to fix that.\n")
+        return
+    try:
+        subprocess.run(["security", "unlock-keychain", "-p", "yapdev",
+                        SIGN_KEYCHAIN], check=True, capture_output=True)
+        out = subprocess.run(["security", "find-certificate", "-c", SIGN_CERT_NAME,
+                              "-Z", SIGN_KEYCHAIN],
+                             check=True, capture_output=True, text=True).stdout
+        sha1 = ""
+        for line in out.splitlines():
+            if "SHA-1 hash" in line:
+                sha1 = line.split()[-1]
+                break
+        if not sha1:
+            print("*** WARNING: signing certificate not found; left ad-hoc signed.")
+            return
+        subprocess.run(["codesign", "--force", "--deep", "--sign", sha1,
+                        "--keychain", SIGN_KEYCHAIN, app],
+                       check=True, capture_output=True)
+        req = subprocess.run(["codesign", "-d", "-r-", app],
+                             capture_output=True, text=True).stderr
+        print("\n==> signed with the stable certificate; permissions will persist.")
+        for line in (req or "").splitlines():
+            if "designated" in line:
+                print("    " + line.strip())
+    except subprocess.CalledProcessError as e:
+        print("*** WARNING: signing failed, app left ad-hoc signed:",
+              (e.stderr or b"").decode()[:200] if isinstance(e.stderr, bytes)
+              else str(e.stderr)[:200])
+
+
 setup(
     app=APP,
     name="Yap",
@@ -108,3 +170,7 @@ setup(
     options={"py2app": OPTIONS},
     setup_requires=["py2app"],
 )
+
+# py2app has finished writing dist/Yap.app by the time setup() returns.
+if "py2app" in sys.argv:
+    _codesign_bundle()
