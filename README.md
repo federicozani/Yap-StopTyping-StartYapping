@@ -6,6 +6,7 @@ To open it the first time:
 
 1. Right-click (or Control-click) `Yap.app` and choose **Open**, then click **Open** again in the box that appears.
 2. If macOS still blocks it, go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** next to the message about Yap.
+3. If you are updating Yap, right click on the fish icon on the tool bar, select "Reset Yap completely" and follow the instructions. This will solve all the permission problems
 
 You only have to do this once. After that it opens normally.
 
