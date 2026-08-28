@@ -1,4 +1,4 @@
-# Yap v. 3.1
+# Yap v3.1
 
 **Read this first (important):** Yap is a small app made by me, Federico, not by a company or an Apple-verified developer. So the first time you open it, macOS will warn you that it is from an "unidentified developer" and may not let you open it with a normal double-click. This is expected and normal for an app shared directly like this.
 
