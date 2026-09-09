@@ -20,10 +20,16 @@ place.
 You bring your **own API key**, and you choose the provider:
 
 - **Google Gemini** — has a **free** tier (no credit card needed)
-- **OpenAI** — `gpt-4o`-family audio models
+- **OpenAI** — the audio chat models: `gpt-4o-audio-preview` (default),
+  `gpt-4o-mini-audio-preview`, `gpt-audio-1.5`, `gpt-audio`
 
-Yap only ever offers models that can take audio directly, so a recording becomes finished text in
-**one network call** — there's no separate "transcribe then format" round-trip.
+Each provider's key is stored separately, so switching between them never means pasting a key
+again. Yap only ever offers models that can take audio directly, so a recording becomes finished
+text in **one network call** — there's no separate "transcribe then format" round-trip.
+
+**Why no Claude / Anthropic?** Claude can't accept audio. Adding it would mean a separate
+speech-to-text step before the formatting call — two round-trips instead of one — which is exactly
+the delay Yap exists to avoid. Gemini and OpenAI both handle audio natively.
 
 ## How it works
 
