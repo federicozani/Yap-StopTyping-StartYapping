@@ -23,7 +23,7 @@ var TEXT_HOTKEYS = [
   { v: "down",  label: "⌘⌥ + ↓" }
 ];
 var DEFAULT_REWRITE_PROMPT =
-  "Rewrite the following text in a clean, clear, professional way. Keep my " +
+  "Rewrite the following text in a clean, clear and friendly way. Keep my " +
   "meaning and key points. Return only the rewritten text, with no preamble " +
   "or commentary. Do not use em dashes; use commas, colons, or separate " +
   "sentences instead.";
@@ -278,19 +278,44 @@ window.yapInit = function (cfg) {
   CONFIG = cfg || CONFIG;
   if (!CONFIG.modes) CONFIG.modes = [];
   normalizeConfig();
-  if (isSettings()) { renderModes(); fillVoice(); fillRecording(); fillDiagnostics(); }
+  if (isSettings()) {
+    renderModes(); fillVoice(); fillRecording(); fillDiagnostics(); fillVersion();
+  }
 };
+
+// The sidebar and About pane both show the version; yap.py's APP_VERSION is the
+// only place it's written. The markup carries the same value as a fallback, so
+// the page still reads correctly if this push never lands.
+function fillVersion() {
+  if (CONFIG.version) {
+    document.querySelectorAll("[data-app-version]").forEach(function (n) {
+      n.textContent = CONFIG.version;
+    });
+  }
+  if (CONFIG.codename) {
+    document.querySelectorAll("[data-app-codename]").forEach(function (n) {
+      n.textContent = CONFIG.codename;
+    });
+  }
+}
 window.yapSaved = function (ok, msg) { if (!ok && msg) banner(msg); };
+
+// Switch the Settings window to one pane by name ("voice", "diagnostics", …),
+// keeping the sidebar selection in step.
+function showPane(name) {
+  var pane = document.getElementById("pane-" + name);
+  if (!pane) return;
+  document.querySelectorAll(".nav-item").forEach(function (n) {
+    n.classList.toggle("active", n.dataset.pane === name);
+  });
+  document.querySelectorAll(".pane").forEach(function (p) { p.classList.remove("active"); });
+  pane.classList.add("active");
+}
 
 function initSettings() {
   // nav
   document.querySelectorAll(".nav-item").forEach(function (item) {
-    item.addEventListener("click", function () {
-      document.querySelectorAll(".nav-item").forEach(function (n) { n.classList.remove("active"); });
-      document.querySelectorAll(".pane").forEach(function (p) { p.classList.remove("active"); });
-      item.classList.add("active");
-      document.getElementById("pane-" + item.dataset.pane).classList.add("active");
-    });
+    item.addEventListener("click", function () { showPane(item.dataset.pane); });
   });
   document.getElementById("add-mode").addEventListener("click", function () {
     var freeHk = (HOTKEYS.filter(function (h) {
@@ -331,7 +356,16 @@ function initSettings() {
     });
   });
   wireDiagnostics();
+  wireRelaunch();
   send("ready");
+}
+
+// Quit & Reopen — Input Monitoring only registers after a relaunch. Present in
+// onboarding and in the hotkey test's fix panel.
+function wireRelaunch() {
+  document.querySelectorAll("[data-relaunch]").forEach(function (b) {
+    b.addEventListener("click", function () { send("relaunchApp"); });
+  });
 }
 
 /* ========================= TEST & DIAGNOSTICS ======================= */
@@ -361,10 +395,40 @@ function wireDiagnostics() {
     diagStart("hotkey", "diag-hotkey-btn", "diag-hotkey-status",
       "Now hold Right Option (⌥) and tap a voice-button arrow…");
   });
+  var paste = document.getElementById("diag-paste-btn");
+  if (paste) paste.addEventListener("click", function () {
+    diagStart("paste", "diag-paste-btn", "diag-paste-status", "Checking Accessibility…");
+  });
   var api = document.getElementById("diag-api-btn");
   if (api) api.addEventListener("click", function () {
     diagStart("api", "diag-api-btn", "diag-api-status", "Contacting the provider…");
   });
+  wireFixPanels();
+}
+
+// The "Not working?" disclosure under each test: it opens System Settings at the
+// exact privacy pane, jumps to another Settings pane, or restarts Yap. Opening a
+// panel re-reads the permission so its chip shows the state as it is right now.
+function wireFixPanels() {
+  document.querySelectorAll("[data-open-pane]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      send("openPermissionPane", { which: b.getAttribute("data-open-pane") });
+    });
+  });
+  document.querySelectorAll("[data-goto-pane]").forEach(function (b) {
+    b.addEventListener("click", function () { showPane(b.getAttribute("data-goto-pane")); });
+  });
+  document.querySelectorAll(".diag-fix").forEach(function (d) {
+    d.addEventListener("toggle", function () { if (d.open) send("permStatus"); });
+  });
+  send("permStatus");
+}
+
+// Reveal the fix panel for a test — used when that test fails, so the answer is
+// already open in front of the user instead of hidden behind a click.
+function openFixPanel(test) {
+  var d = document.querySelector('.diag-fix[data-fix="' + test + '"]');
+  if (d && !d.open) d.open = true;
 }
 
 // Show the currently-selected microphone name on the mic test card.
@@ -384,6 +448,7 @@ window.yapDiag = function (o) {
   if (o.phase !== "done") return;
   var ids = { mic: ["diag-mic-btn", "diag-mic-status"],
               hotkey: ["diag-hotkey-btn", "diag-hotkey-status"],
+              paste: ["diag-paste-btn", "diag-paste-status"],
               api: ["diag-api-btn", "diag-api-status"] };
   var pair = ids[o.test]; if (!pair) return;
   var btn = document.getElementById(pair[0]);
@@ -394,6 +459,8 @@ window.yapDiag = function (o) {
     st.innerHTML = "<span class='diag-badge'>" + (o.ok ? "✓ Pass" : "✗ Fail") +
       "</span> — " + escapeHtml(o.msg || "");
   }
+  // A failure is exactly when the how-to-fix steps are worth reading.
+  if (!o.ok) { openFixPanel(o.test); send("permStatus"); }
   if (o.test === "mic") {
     var meter = document.getElementById("diag-mic-meter");
     if (meter) meter.style.width = Math.min(100, Math.round((o.level || 0) * 140)) + "%";
@@ -487,16 +554,23 @@ function initOnboarding() {
       send("openPermissionPane", { which: row.getAttribute("data-perm") });
     });
   });
-  // Quit & Reopen — Input Monitoring only registers after a relaunch.
-  document.querySelectorAll("[data-relaunch]").forEach(function (b) {
-    b.addEventListener("click", function () { send("relaunchApp"); });
-  });
+  wireRelaunch();
   show(0);
 }
 
-// Python pushes the latest permission status here (see _perm_tick in yap.py).
+// Python pushes the latest permission status here — from _perm_tick during
+// onboarding, and in reply to "permStatus" from the diagnostics fix panels.
 window.yapPerms = function (state) {
   state = state || {};
+  // Diagnostics: the chip on each "Not working?" summary.
+  document.querySelectorAll(".diag-fix[data-perm]").forEach(function (d) {
+    var chip = d.querySelector("[data-perm-chip]");
+    if (!chip) return;
+    var st = state[d.getAttribute("data-perm")] || "unknown";
+    chip.dataset.state = st;
+    chip.textContent = st === "granted" ? "✓ Allowed"
+      : st === "denied" ? "Not allowed" : "Unknown";
+  });
   document.querySelectorAll(".perm-row").forEach(function (row) {
     var which = row.getAttribute("data-perm");
     var st = state[which] || "unknown";

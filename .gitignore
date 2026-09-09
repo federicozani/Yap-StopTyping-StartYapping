@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 build/
 dist/
+# The packaged app that lives in the project folder, ready to install.
+Yap.app/
 *.egg-info/
 *.iconset/
 .DS_Store

@@ -19,7 +19,7 @@
       </nav>
       <div class="side-footer">
         <img class="logo" src="../assets/app-logo.png" alt="">
-        <div class="ver">Yap v1.0 — <b>“Mackerel”</b></div>
+        <div class="ver">Yap v<span data-app-version>3.1</span> — <b>“<span data-app-codename>Mackerel</span>”</b></div>
       </div>
     </aside>
 
@@ -140,7 +140,7 @@
       <!-- TEST & DIAGNOSTICS -------------------------------------------- -->
       <section class="pane" id="pane-diagnostics">
         <style>
-          .diag-card { border:1px solid var(--hairline, #e3e3e6); border-radius:12px;
+          .diag-card { border:1px solid var(--hairline-08); border-radius:var(--r-card);
             padding:16px 18px; margin-bottom:16px; }
           .diag-card h3 { margin:0 0 4px; font-size:15px; }
           .diag-card .help { margin:0 0 12px; }
@@ -151,14 +151,42 @@
           .diag-status.run  { color:#7a7a7a; }
           .diag-badge { font-weight:700; }
           .diag-sub { color:#9a6b00; }
+          .diag-card .btn { background:var(--chip-neutral); color:var(--ink-850);
+            font-size:13.5px; padding:9px 16px; }
+          .diag-card .btn:hover { background:var(--chip-purple); }
+          .diag-card .btn:disabled { opacity:.5; cursor:default; }
           .meter { height:10px; border-radius:6px; background:#ececef; overflow:hidden;
             margin-top:10px; }
           .meter > span { display:block; height:100%; width:0%;
             background:linear-gradient(90deg,#34c759,#30b0c7); transition:width .1s linear; }
+
+          /* "Not working?" disclosure — the fix for the permission each test needs. */
+          .diag-fix { margin-top:14px; border-top:1px solid var(--row-line); padding-top:11px; }
+          .diag-fix > summary { cursor:pointer; list-style:none; display:flex;
+            align-items:center; gap:8px; font-family:var(--font-ui); font-weight:700;
+            font-size:13px; color:var(--brand-purple-deep); }
+          .diag-fix > summary::-webkit-details-marker { display:none; }
+          .diag-fix .tw { display:inline-block; transition:transform .15s ease; font-size:11px; }
+          .diag-fix[open] .tw { transform:rotate(90deg); }
+          .perm-chip { margin-left:auto; font-size:11px; font-weight:700; letter-spacing:.2px;
+            padding:3px 10px; border-radius:var(--r-pill);
+            background:var(--chip-neutral); color:var(--ink-550); }
+          .perm-chip[data-state="granted"] { background:#E4F7E7; color:#137333; }
+          .perm-chip[data-state="denied"]  { background:#FDE7E6; color:#C5221F; }
+          .fix-body { margin-top:11px; background:var(--tint-lavender-2);
+            border-radius:var(--r-card); padding:13px 15px; }
+          .fix-why { margin:0 0 9px; font-size:13px; line-height:1.5; color:var(--ink-600); }
+          .fix-steps { margin:0; padding-left:19px; font-size:13px; line-height:1.65;
+            color:var(--ink-700); }
+          .fix-steps li { margin-bottom:3px; }
+          .fix-note { margin:9px 0 0; font-size:12.5px; line-height:1.5; color:var(--ink-500); }
+          .fix-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
         </style>
         <div class="section-title">Test &amp; diagnostics</div>
-        <div class="section-desc">If Yap isn’t working, run these three checks to see
-          exactly where the problem is. Each test is independent.</div>
+        <div class="section-desc">If Yap isn’t working, run these checks to see exactly
+          where the problem is. Each test is independent. Nearly every first-run problem
+          is one of the three macOS permissions below not being switched on — open
+          <b>Not working?</b> under a failing test for the exact steps.</div>
 
         <div class="diag-card" id="diag-mic">
           <h3>1 · Microphone</h3>
@@ -169,6 +197,29 @@
             <div class="diag-status" id="diag-mic-status">Not tested yet.</div>
           </div>
           <div class="meter"><span id="diag-mic-meter"></span></div>
+
+          <details class="diag-fix" data-fix="mic" data-perm="microphone">
+            <summary><span class="tw">▶</span> Not working? Fix the Microphone permission
+              <span class="perm-chip" data-perm-chip>Checking…</span></summary>
+            <div class="fix-body">
+              <p class="fix-why">Yap needs <b>Microphone</b> access to hear you. macOS asks
+                for it once, the first time you record. If that prompt was dismissed or
+                never appeared, Yap records pure silence and every button does nothing.</p>
+              <ol class="fix-steps">
+                <li>Click <b>Open Microphone settings</b> below. (By hand:  menu →
+                  <b>System Settings</b> → <b>Privacy &amp; Security</b> → <b>Microphone</b>.)</li>
+                <li>Find <b>Yap</b> in the list and turn its switch <b>on</b>.</li>
+                <li>Come back here and run the test again.</li>
+              </ol>
+              <p class="fix-note">No Yap in the list? It only appears after Yap has tried to
+                record at least once — press a voice shortcut, then look again. If the switch
+                is already on but the test still fails, pick a different input under
+                <b>Recording</b>, or raise the input volume.</p>
+              <div class="fix-actions">
+                <button class="btn" data-open-pane="microphone">Open Microphone settings</button>
+              </div>
+            </div>
+          </details>
         </div>
 
         <div class="diag-card" id="diag-hotkey">
@@ -180,16 +231,98 @@
             <button class="btn" id="diag-hotkey-btn">Test hotkey</button>
             <div class="diag-status" id="diag-hotkey-status">Not tested yet.</div>
           </div>
+
+          <details class="diag-fix" data-fix="hotkey" data-perm="inputMonitoring">
+            <summary><span class="tw">▶</span> Not working? Fix the Input Monitoring permission
+              <span class="perm-chip" data-perm-chip>Checking…</span></summary>
+            <div class="fix-body">
+              <p class="fix-why">Yap needs <b>Input Monitoring</b> to notice that you’re
+                holding the shortcut. Without it Yap runs and looks fine, but pressing
+                ⌥ + an arrow does nothing at all.</p>
+              <ol class="fix-steps">
+                <li>Click <b>Open Input Monitoring settings</b> below. (By hand:  menu →
+                  <b>System Settings</b> → <b>Privacy &amp; Security</b> →
+                  <b>Input Monitoring</b>.)</li>
+                <li>Find <b>Yap</b> in the list and turn its switch <b>on</b>.</li>
+                <li><b>Quit and reopen Yap.</b> This one only takes effect after a restart —
+                  use the button below.</li>
+                <li>Reopen Settings and run the test again.</li>
+              </ol>
+              <p class="fix-note">Already switched on but still failing? Turn it <b>off and
+                back on</b>, then restart Yap — macOS keeps a stale entry after an app is
+                updated or moved.</p>
+              <div class="fix-actions">
+                <button class="btn" data-open-pane="inputMonitoring">Open Input Monitoring settings</button>
+                <button class="btn" data-relaunch>Quit &amp; Reopen Yap</button>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <div class="diag-card" id="diag-paste">
+          <h3>3 · Pasting into apps</h3>
+          <div class="help">Checks that Yap is allowed to drop its result where your
+            cursor is (needs Accessibility). This also powers the text
+            <b>Rewrite</b> shortcut.</div>
+          <div class="diag-row">
+            <button class="btn" id="diag-paste-btn">Test pasting</button>
+            <div class="diag-status" id="diag-paste-status">Not tested yet.</div>
+          </div>
+
+          <details class="diag-fix" data-fix="paste" data-perm="accessibility">
+            <summary><span class="tw">▶</span> Not working? Fix the Accessibility permission
+              <span class="perm-chip" data-perm-chip>Checking…</span></summary>
+            <div class="fix-body">
+              <p class="fix-why">Yap pastes by pressing ⌘V for you, and macOS only lets
+                apps trusted for <b>Accessibility</b> do that. Without it, Yap records and
+                transcribes correctly but nothing ever lands in your document — and the
+                ⌘⌥ Rewrite shortcut won’t fire.</p>
+              <ol class="fix-steps">
+                <li>Click <b>Open Accessibility settings</b> below. (By hand:  menu →
+                  <b>System Settings</b> → <b>Privacy &amp; Security</b> →
+                  <b>Accessibility</b>.)</li>
+                <li>Find <b>Yap</b> in the list and turn its switch <b>on</b>.</li>
+                <li>Come back here and run the test again — no restart needed, Yap picks
+                  this one up within a few seconds.</li>
+              </ol>
+              <p class="fix-note">Text still not appearing with Accessibility on? Your
+                transcript is always copied to the clipboard as well, so you can press ⌘V
+                yourself. Some apps also refuse pasted input in password fields.</p>
+              <div class="fix-actions">
+                <button class="btn" data-open-pane="accessibility">Open Accessibility settings</button>
+              </div>
+            </div>
+          </details>
         </div>
 
         <div class="diag-card" id="diag-api">
-          <h3>3 · AI connection</h3>
+          <h3>4 · AI connection</h3>
           <div class="help">Sends one tiny request to your selected provider and model
             using the saved key, to confirm the key and model work.</div>
           <div class="diag-row">
             <button class="btn" id="diag-api-btn">Test connection</button>
             <div class="diag-status" id="diag-api-status">Not tested yet.</div>
           </div>
+
+          <details class="diag-fix" data-fix="api">
+            <summary><span class="tw">▶</span> Not working? Fix the connection</summary>
+            <div class="fix-body">
+              <p class="fix-why">This one isn’t a macOS permission — it’s your API key,
+                your model choice, or the network. The message above the fold says which.</p>
+              <ol class="fix-steps">
+                <li><b>Key rejected (401 / 403):</b> go to <b>Provider &amp; model</b> and
+                  paste the key again — it’s easy to copy a space or half the string.</li>
+                <li><b>Model not available (404):</b> pick a different model under
+                  <b>Provider &amp; model</b>. Not every key can use every model.</li>
+                <li><b>Rate limited (429):</b> wait a minute and test again.</li>
+                <li><b>Couldn’t reach the provider:</b> check your internet connection,
+                  and any VPN or firewall that might block it.</li>
+              </ol>
+              <div class="fix-actions">
+                <button class="btn" data-goto-pane="voice">Go to Provider &amp; model</button>
+              </div>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -200,7 +333,7 @@
           <h1>Yap</h1>
           <p>Stop typing. Start yapping.<br>
              Created by your friendly Federico Zaninelli.<br>
-             Version 1.0 — “Mackerel”</p>
+             Version <span data-app-version>3.1</span> — “<span data-app-codename>Mackerel</span>”</p>
         </div>
         <div class="about-privacy">
           <h2>Your privacy</h2>

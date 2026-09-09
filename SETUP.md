@@ -153,13 +153,13 @@ This (re)creates the four menu-bar state icons in `assets/`, the in-app logo, an
 
 ### What to tell a friend you share `Yap.app` with
 
-1. Move `Yap.app` to Applications. First time: right-click → Open → Open (gets past the "unidentified developer" warning — the app is unsigned).
-2. Grant the three permissions when asked (all under System Settings → Privacy & Security).
+1. Move `Yap.app` to Applications. First time: **right-click → Open → Open**. Double-clicking will be blocked — the app is signed only with your local certificate, which their Mac doesn't trust. If macOS insists the app "is damaged", the download flag is the cause: `xattr -dr com.apple.quarantine /Applications/Yap.app`.
+2. Grant the three permissions when asked (all under System Settings → Privacy & Security). If a prompt is missed, everything still looks fine but nothing works — Settings → **Test & diagnostics** has a test and a step-by-step fix for each one.
 3. Get a free Gemini API key at https://aistudio.google.com.
-4. Click the fish icon → Settings… → Voice & model, paste the key, Save.
+4. Click the fish icon → Settings… → **Provider & model**, paste the key, Save.
 5. Hold Right Option, tap an arrow, talk.
 
-> The app is fully self-contained (it carries its own copy of Python), so your friend doesn't need to install anything. Proper Apple signing for friction-free sharing is a separate, more advanced step not set up here.
+> The app is fully self-contained (it carries its own copy of Python), so your friend doesn't need to install anything. Removing the right-click-to-open step for other people needs an Apple Developer ID and notarization, which is not set up here.
 
 ---
 

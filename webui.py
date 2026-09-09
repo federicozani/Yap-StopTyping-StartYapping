@@ -26,7 +26,9 @@ from AppKit import (
     NSPopUpMenuWindowLevel, NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp,
     NSEventTypeRightMouseUp, NSEventModifierFlagControl,
-    NSMenu, NSMenuItem,
+    NSMenu, NSMenuItem, NSView,
+    NSApplicationActivationPolicyRegular, NSApplicationActivationPolicyAccessory,
+    NSViewWidthSizable, NSViewHeightSizable, NSViewMinYMargin,
 )
 from Foundation import NSObject, NSURL, NSMakeRect
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserContentController
@@ -37,6 +39,53 @@ _LIVE = set()
 
 # Whether the standard Edit menu (copy/paste/…) has been installed yet.
 _EDIT_MENU_INSTALLED = False
+
+
+# Height of the HTML title bar (.titlebar in app.css). The drag strip must match.
+TITLEBAR_HEIGHT = 38.0
+
+
+class _DragStrip(NSView):
+    """An invisible view laid over the HTML title bar so the window can be
+    dragged by it.
+
+    The windows use NSWindowStyleMaskFullSizeContentView, so the WKWebView
+    covers the whole frame — including where the system title bar would be. A
+    web view swallows every mouse event and reports mouseDownCanMoveWindow =
+    False, which left the window impossible to move: there was no draggable
+    surface anywhere on it. (`-webkit-app-region: drag` is a Chromium
+    extension; WebKit ignores it, so the CSS title bar can't help here.)
+
+    This strip sits above the web view in the content view and answers YES, so
+    AppKit drags the window when a click lands on it. It belongs to the content
+    view, which sits BELOW the frame's title-bar view, so the traffic-light
+    buttons keep receiving their own clicks."""
+
+    def mouseDownCanMoveWindow(self):
+        return True
+
+    def acceptsFirstMouse_(self, event):
+        # Drag the window on the very first click, even when Yap isn't active.
+        return True
+
+
+def _set_activation_policy(regular):
+    """Yap is an LSUIElement (menu-bar-only) app, and an accessory app can't
+    reliably take and hold front-most position: Settings would open behind
+    whatever you were using, or sink the moment focus moved. Becoming a Regular
+    app for as long as a real window is open makes macOS treat that window
+    normally — it comes to the front, stays in its z-order, and joins Cmd-Tab.
+    A Dock icon appears while it's open and goes away with it."""
+    try:
+        NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular if regular
+                                   else NSApplicationActivationPolicyAccessory)
+    except Exception:
+        pass
+
+
+def _web_windows_open():
+    """How many real (non-panel) web windows are on screen."""
+    return sum(1 for c in _LIVE if isinstance(c, YapWebWindow))
 
 
 def _to_py(obj):
@@ -75,6 +124,9 @@ class YapWebWindow(NSObject):
     # ---- NSWindowDelegate ------------------------------------------------
     def windowWillClose_(self, notification):
         _LIVE.discard(self)
+        # Last real window gone -> back to a menu-bar-only app (Dock icon goes).
+        if _web_windows_open() == 0:
+            _set_activation_policy(False)
         if self._on_close is not None:
             try:
                 self._on_close(self)
@@ -94,8 +146,27 @@ class YapWebWindow(NSObject):
         self.eval_js("window.%s && window.%s(%s);" % (fn_name, fn_name, json.dumps(obj)))
 
     def show_window(self):
-        self.window.makeKeyAndOrderFront_(None)
+        # Become a Regular app FIRST: an accessory app can't reliably come to
+        # the front, which is why Settings used to open behind other windows.
+        _set_activation_policy(True)
         NSApp.activateIgnoringOtherApps_(True)
+        self.window.makeKeyAndOrderFront_(None)
+        self.window.orderFrontRegardless()
+        # The Accessory -> Regular switch is applied asynchronously by the
+        # WindowServer, so an activation issued in the same turn can be ignored
+        # and the window opens behind whatever you were using. Re-assert on the
+        # next runloop turns, once the new policy has actually taken hold.
+        for delay in (0.05, 0.20):
+            self.performSelector_withObject_afterDelay_("raiseWindow", None, delay)
+
+    def raiseWindow(self):
+        try:
+            if not self.window.isVisible():
+                return
+            NSApp.activateIgnoringOtherApps_(True)
+            self.window.makeKeyAndOrderFront_(None)
+        except Exception:
+            pass
 
     def close_window(self):
         self.window.close()
@@ -174,7 +245,17 @@ def open_window(html_path, web_root, title, size=(720, 600),
     win.setBackgroundColor_(NSColor.whiteColor())
     if resizable:
         win.setContentMinSize_(min_size)
-    win.setContentView_(webview)
+    # The web view fills the window; an invisible strip over the HTML title bar
+    # gives the window something draggable (see _DragStrip).
+    container = NSView.alloc().initWithFrame_(frame)
+    webview.setFrame_(frame)
+    webview.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+    container.addSubview_(webview)
+    strip = _DragStrip.alloc().initWithFrame_(
+        NSMakeRect(0, h - TITLEBAR_HEIGHT, w, TITLEBAR_HEIGHT))
+    strip.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin)
+    container.addSubview_(strip)
+    win.setContentView_(container)
     win.setReleasedWhenClosed_(False)
     win.setDelegate_(ctrl)
     win.center()

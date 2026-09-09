@@ -61,10 +61,26 @@ def _tree_data_files(folder):
     return entries
 
 
+def _app_version():
+    """Read APP_VERSION straight out of yap.py, by text, so the built bundle's
+    version always matches what the app shows in Settings. Parsed rather than
+    imported: importing yap.py here would drag in rumps/pynput/sounddevice just
+    to read one string."""
+    import re
+    src = open("yap.py", encoding="utf-8").read()
+    m = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', src, re.M)
+    if not m:
+        raise SystemExit("setup_app.py: couldn't find APP_VERSION in yap.py")
+    return m.group(1)
+
+
 APP = ["yap.py"]
 # Ship the embedded web UI (Settings/onboarding/quick panel) and the menu-bar
 # lifecycle icons so they're available inside the bundle's Resources.
-DATA_FILES = _tree_data_files("web") + _tree_data_files("assets")
+# tools/ ships too: the "Reset Yap completely…" menu item runs
+# tools/reset-yap.sh from inside the bundle.
+DATA_FILES = (_tree_data_files("web") + _tree_data_files("assets")
+              + _tree_data_files("tools"))
 OPTIONS = {
     "argv_emulation": False,
     "plist": {
@@ -77,6 +93,17 @@ OPTIONS = {
         # differs from the old "com.parla.app", so macOS will ask for the three
         # permissions once more on Yap's first launch — expected after the rename.
         "CFBundleIdentifier": "com.yap.app",
+        # Both stamped from yap.py's APP_VERSION — this is what Finder's
+        # "Get Info" shows, and it must agree with the About pane.
+        "CFBundleShortVersionString": _app_version(),
+        "CFBundleVersion": _app_version(),
+        # numpy and _cffi_backend are compiled for the BUILD machine's CPU, so
+        # this bundle only runs on Apple Silicon (see README → Distribution).
+        # 11.0 is the first macOS on that hardware, and requiring native
+        # execution stops anything launching Yap under Rosetta, where the
+        # arm64 extensions would fail to load.
+        "LSMinimumSystemVersion": "11.0",
+        "LSRequiresNativeExecution": True,
         "NSMicrophoneUsageDescription": "Yap records your voice to transcribe it.",
     },
     # sounddevice ships its PortAudio binary inside the _sounddevice_data

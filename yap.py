@@ -31,7 +31,29 @@ import time
 import wave
 from pathlib import Path
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError as _numpy_err:
+    # The bundled numpy and _cffi_backend are compiled for THIS Mac's CPU. On a
+    # Mac with a different architecture the import dies deep inside numpy and
+    # py2app shows only "Launch error", which tells the user nothing. Say what
+    # actually happened, in a dialog they can read, before giving up.
+    import platform
+    import subprocess as _sp
+    _msg = ("Yap can't run on this Mac.\n\n"
+            "This copy was built for a different processor "
+            "(it needs an Apple Silicon Mac — M1 or newer).\n\n"
+            "Ask for a build made for your Mac.")
+    try:
+        _sp.run(["osascript", "-e",
+                 'display alert "Yap can\u2019t start" message "%s" as critical giving up after 120'
+                 % _msg.replace('"', '\\"').replace("\n", "\\n")], check=False)
+    except Exception:
+        pass
+    print("[yap] FATAL: numpy failed to import on %s (%s): %s"
+          % (platform.machine(), platform.platform(), _numpy_err), file=sys.stderr)
+    raise SystemExit(1)
+
 import requests
 import rumps
 import sounddevice as sd
@@ -75,6 +97,7 @@ def log(*a):
     print(msg, file=sys.stderr, flush=True)
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        _rotate_log_if_big()
         # encoding="utf-8" is essential: the bundled app's default text encoding
         # is ASCII, and log lines contain ⌥/🔴/⏳ etc., which would otherwise
         # raise UnicodeEncodeError and silently drop the line.
@@ -84,11 +107,236 @@ def log(*a):
         pass  # logging must never break the app
 
 
+def _rotate_log_if_big():
+    """Keep yap.log small enough to send. Once it passes LOG_MAX_BYTES it
+    becomes yap.log.1 (replacing any previous one) and a fresh log starts.
+    Two files means the history around a problem survives one rotation."""
+    try:
+        if LOG_PATH.exists() and LOG_PATH.stat().st_size > LOG_MAX_BYTES:
+            prev = LOG_PATH.with_suffix(".log.1")
+            try:
+                if prev.exists():
+                    prev.unlink()
+            except Exception:
+                pass
+            LOG_PATH.rename(prev)
+    except Exception:
+        pass  # rotation must never break logging
+
+
+def log_environment():
+    """Record WHICH copy of Yap is running, and where from.
+
+    When Yap misbehaves on another Mac the log is all we get, and the usual
+    culprits are invisible without this: an old copy launching instead of the
+    new one, a quarantined app macOS is running from a randomised read-only
+    path (App Translocation — permissions can never stick to it), or a
+    processor mismatch. One line each, so the log answers those first."""
+    try:
+        import platform
+        exe = sys.executable or ""
+        bundle = ""
+        if getattr(sys, "frozen", False):
+            # …/Yap.app/Contents/MacOS/Yap  ->  …/Yap.app
+            bundle = os.path.abspath(os.path.join(os.path.dirname(exe), "..", ".."))
+        log("Yap %s (%s) — python %s on macOS %s / %s"
+            % (APP_VERSION, APP_CODENAME, platform.python_version(),
+               platform.mac_ver()[0] or "?", platform.machine()))
+        log("running from: %s" % (bundle or exe or "source"))
+        if bundle and "/AppTranslocation/" in bundle:
+            log("WARNING: macOS is running Yap from a randomised read-only copy "
+                "(App Translocation). Permissions can NEVER stick like this — "
+                "move Yap.app to Applications in Finder and remove the download "
+                "flag: xattr -dr com.apple.quarantine /Applications/Yap.app")
+        if bundle:
+            try:
+                q = subprocess.run(["xattr", "-p", "com.apple.quarantine", bundle],
+                                   capture_output=True, text=True)
+                if q.returncode == 0 and q.stdout.strip():
+                    log("WARNING: this copy is still marked as downloaded "
+                        "(quarantine=%s). Run: xattr -dr com.apple.quarantine %s"
+                        % (q.stdout.strip(), bundle))
+            except Exception:
+                pass
+    except Exception:
+        log_exc("could not log the environment")
+
+
+def _bundle_path():
+    """Path to the running .app, or "" when running from source."""
+    if not getattr(sys, "frozen", False):
+        return ""
+    exe = sys.executable or ""
+    return os.path.abspath(os.path.join(os.path.dirname(exe), "..", ".."))
+
+
+def startup_repair():
+    """Fix, at launch, the states that silently stop Yap working — the ones a
+    user has no way to guess at.
+
+    Only the safe half of a reset can be automated. Yap CAN strip its own
+    download flag and throw away its own stale web-view cache. It deliberately
+    does NOT touch your settings or your API key (an update must never cost you
+    those), and it CANNOT reset its own macOS permissions: Accessibility and
+    Input Monitoring live in a system database that needs an administrator
+    password, and an app that asks for your password at launch is exactly what
+    you should refuse. That part stays in "Reset Yap completely…" in the menu."""
+    bundle = _bundle_path()
+    if not bundle:
+        return
+
+    # 1. Running from a randomised read-only copy: nothing granted can stick.
+    #    Yap can't move itself out of there, so say so, loudly and precisely.
+    if "/AppTranslocation/" in bundle:
+        msg = ("macOS is running Yap from a temporary read-only copy, because "
+               "the app is still marked as downloaded. Permissions you grant "
+               "can never stick while this is true.\n\n"
+               "Fix it: quit Yap, drag Yap.app to your Applications folder in "
+               "Finder, then open it from there.")
+        log("TRANSLOCATED — " + msg.replace("\n", " "))
+        _alert("Yap needs to be moved", msg)
+        return
+
+    # 2. The download flag itself. Left on, it re-triggers the above on the next
+    #    launch. Yap owns this file, so it can simply clear it.
+    try:
+        q = subprocess.run(["xattr", "-p", "com.apple.quarantine", bundle],
+                           capture_output=True, text=True)
+        if q.returncode == 0 and q.stdout.strip():
+            r = subprocess.run(["xattr", "-dr", "com.apple.quarantine", bundle],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                log("removed the download flag from %s (it blocks Gatekeeper "
+                    "and breaks permissions)" % bundle)
+            else:
+                log("could not remove the download flag: %s"
+                    % (r.stderr or "").strip()[:120])
+    except Exception:
+        log_exc("quarantine check failed")
+
+
+def clear_web_cache():
+    """Throw away the Settings web view's cache.
+
+    WKWebView caches the HTML/CSS/JS behind Settings, so after an update you can
+    be looking at the OLD page in a NEW app. Cheap to rebuild, so this runs
+    whenever the version changes."""
+    for d in ("~/Library/Caches/com.yap.app", "~/Library/WebKit/com.yap.app"):
+        path = Path(d).expanduser()
+        try:
+            if path.exists():
+                shutil.rmtree(path, ignore_errors=True)
+                log("cleared stale web cache: %s" % path)
+        except Exception:
+            log_exc("could not clear %s" % path)
+
+
+def _alert(title, message):
+    """A dialog that never blocks startup and never gets stuck on screen."""
+    try:
+        subprocess.Popen(
+            ["osascript", "-e",
+             'display alert "%s" message "%s" giving up after 120'
+             % (title.replace('"', '\\"'),
+                message.replace('\\', '\\\\').replace('"', '\\"').replace("\n", "\\n"))])
+    except Exception:
+        log_exc("could not show alert")
+
+
+def another_copy_is_running():
+    """True when a DIFFERENT copy of Yap.app is already running.
+
+    macOS stops you launching the same bundle twice, but two copies in
+    different folders (the old one in Applications, a new one in Downloads)
+    happily run at once — and then both listen for the same shortcut while the
+    permissions are granted to only one of them."""
+    if not getattr(sys, "frozen", False):
+        return False  # running from source alongside the app is intentional
+    try:
+        from AppKit import NSRunningApplication, NSBundle
+        me = NSBundle.mainBundle().bundleIdentifier()
+        if not me:
+            return False
+        others = NSRunningApplication.runningApplicationsWithBundleIdentifier_(me)
+        mine = os.getpid()
+        for app in others or []:
+            if app.processIdentifier() != mine:
+                try:
+                    log("other copy: pid %s at %s"
+                        % (app.processIdentifier(),
+                           app.bundleURL().path() if app.bundleURL() else "?"))
+                except Exception:
+                    pass
+                return True
+    except Exception:
+        log_exc("could not check for another running copy")
+    return False
+
+
 def log_exc(prefix="ERROR"):
     """Log a full traceback (used in background threads where a bare raise would
     otherwise vanish silently)."""
     import traceback
     log(prefix + "\n" + traceback.format_exc().rstrip())
+
+
+# Kept alive for the life of the process: faulthandler writes into this file
+# descriptor from a signal handler, so it must never be garbage collected.
+_crash_file = None
+
+
+def install_crash_handlers():
+    """Make sure a crash always leaves something behind to read.
+
+    Yap had three blind spots. A crash inside native code (CoreAudio, PortAudio,
+    WebKit) killed the process without unwinding any Python, so yap.log ended
+    mid-sentence and said nothing. An unhandled exception on the main thread
+    printed to a stderr nobody sees in a double-clicked .app. And an exception in
+    a worker thread vanished entirely. After this runs, all three land on disk.
+
+    Every part is guarded: a diagnostic aid must never be the thing that stops
+    the app starting."""
+    global _crash_file
+    try:
+        import faulthandler
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        # Line-buffered and never closed — faulthandler writes to this fd from a
+        # signal handler during the crash itself.
+        _crash_file = open(CRASH_LOG_PATH, "a", buffering=1)
+        _crash_file.write("\n===== Yap %s started %s =====\n"
+                          % (APP_VERSION, time.strftime("%Y-%m-%d %H:%M:%S")))
+        faulthandler.enable(file=_crash_file, all_threads=True)
+    except Exception:
+        pass
+
+    def _hook(exc_type, exc_value, exc_tb):
+        try:
+            import traceback
+            log("UNHANDLED EXCEPTION on the main thread\n"
+                + "".join(traceback.format_exception(exc_type, exc_value, exc_tb)).rstrip())
+        except Exception:
+            pass
+
+    try:
+        sys.excepthook = _hook
+    except Exception:
+        pass
+
+    # threading.excepthook is Python 3.8+; guarded anyway so an older or odd
+    # interpreter can't turn this into a launch failure.
+    try:
+        def _thread_hook(args):
+            try:
+                import traceback
+                log("UNHANDLED EXCEPTION in thread %s\n"
+                    % getattr(args.thread, "name", "?")
+                    + "".join(traceback.format_exception(
+                        args.exc_type, args.exc_value, args.exc_traceback)).rstrip())
+            except Exception:
+                pass
+        threading.excepthook = _thread_hook
+    except Exception:
+        pass
 
 
 # Anything that looks like an API key/token. Used to scrub provider error
@@ -115,12 +363,34 @@ def notify(title, subtitle, message=""):
 
 
 # ---------------------------------------------------------------------------
+# Version. THE single source of truth: the Settings sidebar and About pane are
+# filled from here at runtime, and setup_app.py reads this line to stamp
+# CFBundleShortVersionString into the built .app, so Finder's "Get Info" and the
+# app itself can never disagree. Bump it here and nowhere else.
+# ---------------------------------------------------------------------------
+
+APP_VERSION = "3.2"
+APP_CODENAME = "Herring"
+
+# ---------------------------------------------------------------------------
 # Config: where settings live, and the defaults we create on first run.
 # ---------------------------------------------------------------------------
 
 CONFIG_DIR = Path.home() / ".yap"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 LOG_PATH = CONFIG_DIR / "yap.log"
+
+# Where faulthandler writes when the app dies inside native code (CoreAudio,
+# WebKit, PortAudio). A hard crash like that unwinds no Python, so nothing
+# reaches yap.log — this file is the only trace left behind. See
+# install_crash_handlers().
+CRASH_LOG_PATH = CONFIG_DIR / "yap-crash.log"
+
+# yap.log is append-only and had grown past 3 MB / 68k lines in normal use,
+# which is more than anyone can send when asking for help. Rotate it at 2 MB,
+# keeping one previous file, so the log stays complete enough to diagnose from
+# and small enough to attach to a message.
+LOG_MAX_BYTES = 2 * 1024 * 1024
 
 # Safety net for recordings: every clip is written here BEFORE it is sent, and
 # deleted the moment the model answers. Only clips whose upload failed outright
@@ -188,6 +458,10 @@ CHANNELS = 1
 # arrow" (hold ⌘⌥, tap arrow, rewrite the selection in place).
 ARROW_HOTKEYS = {"left", "up", "right", "down"}
 
+# Log every key the listener sees. Off by default: it is the single noisiest
+# line in the app and made yap.log unusable for diagnosing anything else.
+DEBUG_KEYS = os.environ.get("YAP_DEBUG_KEYS") == "1"
+
 # Arrow hotkey name → macOS virtual-key code (Carbon HIToolbox kVK_*Arrow). The
 # suppressor tap matches the rewrite chord by the arrow's vk + the modifier flags.
 ARROW_VK = {"left": 123, "right": 124, "down": 125, "up": 126}
@@ -216,6 +490,214 @@ LETTER_VK = {
 }
 VK_TO_LETTER = {vk: ltr for ltr, vk in LETTER_VK.items()}
 TEXT_HOTKEYS = set(LETTER_VK)
+
+# Arrow virtual-key code → hotkey name, for our own event tap (see QuartzKeyTap).
+VK_TO_ARROW = {vk: name for name, vk in ARROW_VK.items()}
+
+# The modifier keys we track, by virtual-key code (Carbon kVK_*), each with the
+# device-dependent flag bit that says whether THAT key is down (IOKit
+# IOLLEvent.h). macOS reports a modifier as a "flags changed" event rather than
+# a key up/down, so the only way to tell press from release is to look at
+# whether the key's own bit survived the change.
+MODIFIER_VK = {
+    55: ("cmd_l", 0x000008),
+    54: ("cmd_r", 0x000010),
+    58: ("alt_l", 0x000020),
+    61: ("alt_r", 0x000040),
+    59: ("ctrl_l", 0x000001),
+    62: ("ctrl_r", 0x002000),
+}
+
+
+class QuartzKeyTap:
+    """The hold-to-talk listener, as an event tap Yap owns outright.
+
+    Why not pynput, which is already a dependency? Because macOS switches off any
+    event tap whose callback takes too long, and it does so silently: the tap
+    stops delivering, the thread stays alive, nothing raises and nothing is
+    logged. pynput enables its tap once at startup and has no code path that
+    re-enables it, so the hotkey stayed dead until Yap was quit and reopened.
+    Owning the tap is the only way to notice that and fix it — macOS reports the
+    shutdown as a kCGEventTapDisabledBy* event, and re-enabling is a single call.
+
+    The tap is LISTEN-ONLY on purpose. It cannot alter or swallow keystrokes, so
+    it needs Input Monitoring but never Accessibility — preserving the split that
+    lets voice keep working when only Accessibility is missing. The separate
+    suppressor tap (_start_suppressor) is the one that needs to modify events.
+
+    Keys are handed to the same on_press/on_release callbacks pynput used, as the
+    same pynput Key objects, so everything downstream is unchanged and the pynput
+    path below stays a working fallback."""
+
+    def __init__(self, on_press, on_release, quiet=False):
+        self._on_press = on_press
+        self._on_release = on_release
+        # quiet=True for the retry loop: it runs every few seconds while the
+        # permission is missing, and one "not granted" line per attempt would
+        # bury the log in exactly the situation you need to read it.
+        self._quiet = quiet
+        self._tap = None
+        self._loop = None
+        self._thread = None
+        self._running = False
+        self._ready = threading.Event()
+        self._reenables = 0
+
+    # ---- lifecycle -------------------------------------------------------
+
+    @staticmethod
+    def input_monitoring_granted():
+        """Is Input Monitoring actually granted?
+
+        This has to be asked separately, because CGEventTapCreate SUCCEEDS
+        without the permission — it hands back a tap that is simply never sent
+        any events. So "the tap was created" says nothing about whether the
+        hotkey works, and treating it as success is how you end up reporting a
+        working listener to someone whose hotkey does nothing."""
+        try:
+            from Quartz import CGPreflightListenEventAccess
+            return bool(CGPreflightListenEventAccess())
+        except Exception:
+            try:
+                import permissions
+                return permissions.input_monitoring_status() == "granted"
+            except Exception:
+                return False
+
+    def start(self, timeout=5.0):
+        """Create the tap on its own run-loop thread. Returns True if it is live.
+
+        False means macOS refused to create the tap outright. Note that True
+        does NOT mean the hotkey works — see input_monitoring_granted()."""
+        if Quartz is None:
+            return False
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="yap-keytap")
+        self._thread.start()
+        self._ready.wait(timeout)
+        return self._tap is not None
+
+    def stop(self):
+        self._running = False
+        try:
+            if self._loop is not None:
+                Quartz.CFRunLoopStop(self._loop)
+        except Exception:
+            pass
+
+    def _run(self):
+        try:
+            mask = ((1 << Quartz.kCGEventKeyDown)
+                    | (1 << Quartz.kCGEventKeyUp)
+                    | (1 << Quartz.kCGEventFlagsChanged))
+            tap = Quartz.CGEventTapCreate(
+                Quartz.kCGSessionEventTap,
+                Quartz.kCGHeadInsertEventTap,
+                Quartz.kCGEventTapOptionListenOnly,
+                mask,
+                self._callback,
+                None,
+            )
+            if tap is None:
+                # Almost always Input Monitoring. Say so rather than leaving a
+                # bare "tap is None" for someone to decode later.
+                if not self._quiet:
+                    log("could not create the keyboard event tap — Input "
+                        "Monitoring is not granted. System Settings → Privacy & "
+                        "Security → Input Monitoring, switch Yap on.")
+                self._ready.set()
+                return
+            self._tap = tap
+            source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
+            self._loop = Quartz.CFRunLoopGetCurrent()
+            Quartz.CFRunLoopAddSource(self._loop, source,
+                                      Quartz.kCFRunLoopCommonModes)
+            Quartz.CGEventTapEnable(tap, True)
+            self._ready.set()
+            while self._running:
+                Quartz.CFRunLoopRunInMode(Quartz.kCFRunLoopDefaultMode, 1.0, False)
+        except Exception:
+            log_exc("the keyboard event tap thread died")
+        finally:
+            self._ready.set()
+            self._loop = None
+
+    # ---- health ----------------------------------------------------------
+
+    def is_alive(self):
+        return self._thread is not None and self._thread.is_alive()
+
+    def ensure_enabled(self):
+        """Re-enable the tap if macOS has switched it off. Returns True if it
+        had to act. Called from the _tick watchdog as a backstop to the
+        kCGEventTapDisabledBy* event, which is the usual way we hear about it."""
+        if Quartz is None or self._tap is None:
+            return False
+        try:
+            if Quartz.CGEventTapIsEnabled(self._tap):
+                return False
+            Quartz.CGEventTapEnable(self._tap, True)
+            self._reenables += 1
+            log("the keyboard event tap had been switched off by macOS — "
+                "re-enabled it (%d time(s) so far this run)" % self._reenables)
+            return True
+        except Exception:
+            log_exc("could not re-enable the keyboard event tap")
+            return False
+
+    # ---- the callback ----------------------------------------------------
+
+    def _callback(self, proxy, event_type, event, refcon):
+        """Runs on the tap thread for every key event. MUST be fast: macOS
+        disables a tap whose callback dawdles, which is the whole reason this
+        class exists. Everything slow is dispatched to a worker elsewhere."""
+        try:
+            # macOS telling us it has switched the tap off. Turning it back on
+            # here is what makes the hotkey survive; without this the app looks
+            # alive and does nothing.
+            if event_type in (Quartz.kCGEventTapDisabledByTimeout,
+                              Quartz.kCGEventTapDisabledByUserInput):
+                why = ("it was too slow to respond"
+                       if event_type == Quartz.kCGEventTapDisabledByTimeout
+                       else "the system disabled it")
+                self._reenables += 1
+                Quartz.CGEventTapEnable(self._tap, True)
+                log("macOS switched the keyboard event tap off (%s) — "
+                    "re-enabled it (%d time(s) so far this run)"
+                    % (why, self._reenables))
+                return event
+
+            vk = Quartz.CGEventGetIntegerValueField(
+                event, Quartz.kCGKeyboardEventKeycode)
+
+            if event_type == Quartz.kCGEventFlagsChanged:
+                mod = MODIFIER_VK.get(vk)
+                if mod is not None:
+                    name, bit = mod
+                    key = getattr(keyboard.Key, name, None)
+                    if key is not None:
+                        flags = Quartz.CGEventGetFlags(event)
+                        if flags & bit:
+                            self._on_press(key)
+                        else:
+                            self._on_release(key)
+                return event
+
+            arrow = VK_TO_ARROW.get(vk)
+            if arrow is not None:
+                key = getattr(keyboard.Key, arrow, None)
+                if key is not None:
+                    if event_type == Quartz.kCGEventKeyDown:
+                        self._on_press(key)
+                    elif event_type == Quartz.kCGEventKeyUp:
+                        self._on_release(key)
+        except Exception:
+            # An exception must never escape into the tap. This is exactly how
+            # the pynput listener used to die: one bad event and the whole
+            # hotkey stopped, silently, for the rest of the session.
+            log_exc("error handling a key event (ignored, tap stays up)")
+        return event
 
 
 def chord_letter(key):
@@ -277,6 +759,9 @@ DEFAULT_CONFIG = {
     # version is older, the modes are refreshed to these defaults (your provider,
     # API keys and model picks are kept). New prompt fixes apply on a restart.
     "config_version": 9,
+    # The version that last ran. Used only to notice an upgrade and drop the
+    # stale Settings web cache; never affects your settings or your key.
+    "last_version": "",
     "modes": [
         {
             "key": "clean",
@@ -364,7 +849,7 @@ DEFAULT_CONFIG = {
             "input": "text",
             "hotkey": "left",  # Right ⌘ + Right ⌥ + ←
             "prompt": (
-                "Rewrite the following text in a clean, clear, professional way. "
+                "Rewrite the following text in a clean, clear and friendly way. "
                 "Keep my meaning and key points. Return only the rewritten text, "
                 "with no preamble or commentary. Do not use em dashes; use commas, "
                 "colons, or separate sentences instead."
@@ -845,16 +1330,31 @@ def _resolve_input_device(name):
 
 
 class Recorder:
+    """Owns the microphone stream.
+
+    start() and stop() are called from DIFFERENT worker threads (opening and
+    closing the device are both too slow to run on the event-tap callback — see
+    _on_press), and a quick tap can order them so that stop() arrives while
+    start() is still opening the device. `_lock` serialises the two, and
+    `_generation` lets a start that finishes after its stop close itself
+    immediately instead of leaving the microphone — and its recording
+    indicator — switched on forever."""
+
     def __init__(self):
         self._frames = []
         self._stream = None
+        self._lock = threading.Lock()
+        self._generation = 0
         # The rate/channels we actually CAPTURED at (filled in by start()). The
         # WAV we hand back is always SAMPLE_RATE / CHANNELS — we resample in stop().
         self._capture_rate = SAMPLE_RATE
         self._capture_channels = CHANNELS
 
     def start(self, device_name=""):
-        self._frames = []
+        with self._lock:
+            self._generation += 1
+            generation = self._generation
+            self._frames = []
 
         device = _resolve_input_device(device_name)
 
@@ -878,22 +1378,53 @@ class Recorder:
         def callback(indata, frames, time_info, status):
             self._frames.append(indata.copy())
 
-        self._stream = sd.InputStream(
+        stream = sd.InputStream(
             samplerate=rate, channels=channels, dtype="int16",
             device=device, callback=callback,
         )
-        self._stream.start()
+        stream.start()
+
+        with self._lock:
+            if generation != self._generation:
+                # A stop() (or another start) happened while the device was
+                # opening. This stream is already obsolete — close it here or the
+                # microphone stays live with nobody holding it.
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
+                log("microphone opened after the recording had already stopped "
+                    "— closed it again")
+                return
+            self._stream = stream
 
     def stop(self) -> bytes:
         """Stop recording and return the audio as in-memory WAV bytes — always
-        16 kHz mono, regardless of the rate/channels the device captured at."""
-        if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
-        if not self._frames:
+        16 kHz mono, regardless of the rate/channels the device captured at.
+
+        Closing the stream is guarded: if the microphone was unplugged (or macOS
+        pulled it out from under us) PortAudio raises here, and an exception
+        escaping this method used to be fatal — it propagated into the key-release
+        handler and permanently killed the hotkey listener. Whatever frames were
+        already captured are still worth returning, so we log the failure and
+        carry on with them."""
+        with self._lock:
+            # Retiring the generation tells an in-flight start() that its stream
+            # is obsolete, so a stop that lands mid-open still leaves the
+            # microphone closed.
+            self._generation += 1
+            stream, self._stream = self._stream, None
+            frames, self._frames = self._frames, []
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception as e:
+                log("could not close the microphone stream cleanly:", e)
+        if not frames:
             return b""
-        audio = np.concatenate(self._frames, axis=0)  # (n, channels) int16
+        audio = np.concatenate(frames, axis=0)  # (n, channels) int16
 
         # Down-mix to mono.
         if audio.ndim == 2 and audio.shape[1] > 1:
@@ -1043,6 +1574,30 @@ def diag_api(config):
         return (False, "Unexpected error: " + _redact(str(e)))
 
 
+def diag_paste():
+    """Accessibility diagnostic for Settings. Yap delivers every result by
+    simulating Cmd+V, which macOS only permits for apps trusted for
+    Accessibility — the same trust the text-rewrite chord needs. A real paste
+    can't be tested without stealing focus and typing into whoever is in front,
+    so this reports the trust status, which is what actually breaks. Returns
+    (ok, message)."""
+    try:
+        import permissions
+        status = permissions.accessibility_status()
+    except Exception:
+        log_exc("diag_paste failed")
+        status = "unknown"
+    if status == "granted":
+        return (True, "Accessibility is on — Yap can paste into other apps and "
+                "the rewrite shortcut works.")
+    if status == "denied":
+        return (False, "Accessibility is off, so Yap can transcribe but can’t "
+                "paste the result (and the rewrite shortcut won’t fire). Open "
+                "the fix below to switch it on.")
+    return (False, "Couldn’t read the Accessibility permission. Check it under "
+            "System Settings → Privacy & Security → Accessibility.")
+
+
 # ---------------------------------------------------------------------------
 # Pasting: copy text to clipboard, then simulate Cmd+V into the focused app.
 # ---------------------------------------------------------------------------
@@ -1159,6 +1714,20 @@ class YapApp(rumps.App):
         idle_icon, idle_tmpl = ICON_STATES["idle"]
         super().__init__("", icon=idle_icon, template=idle_tmpl, quit_button=None)
         self.config = load_config()
+        # An upgrade (or a downgrade) invalidates the cached Settings page, so
+        # drop it once, here, rather than leaving people looking at the old UI
+        # inside the new app. Settings and API key are untouched.
+        if self.config.get("last_version") != APP_VERSION:
+            previous = self.config.get("last_version") or "none"
+            log("version changed: %s -> %s" % (previous, APP_VERSION))
+            clear_web_cache()
+            self.config["last_version"] = APP_VERSION
+            try:
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                with open(CONFIG_PATH, "w") as f:
+                    json.dump(self.config, f, indent=2)
+            except Exception:
+                log_exc("could not record the running version")
         # Show the welcome/onboarding flow on first run OR whenever there is no
         # usable API key in ~/.yap (e.g. after `rm -rf ~/.yap`, or a config that
         # was never finished). Keying off the actual stored key — not just the
@@ -1183,6 +1752,21 @@ class YapApp(rumps.App):
         self._panel_compact = False    # is the panel currently the minimal chip?
         self._click_installed = False  # menu-bar icon click routing set up yet?
         self._statusmenu = None        # the NSMenu (kept for right-click)
+        # Hold-to-talk tap (see QuartzKeyTap) — set up in _start_listener, which
+        # runs before the timer starts, but declared here so _tick can never
+        # arrive first and find them missing.
+        self._keytap = None
+        self._keytap_next_try = 0.0
+        self._keytap_granted = False   # is Input Monitoring actually granted?
+        self._listener = None
+        self._suppressor = None
+        self._suppressor_disabled = False
+        # Menu-bar icon health (see _statusitem_check). _statusitem_deadline is
+        # when we give up waiting for the icon to appear and tell the user.
+        self._statusitem_ready = False
+        self._statusitem_deadline = time.time() + 5.0
+        self._statusitem_warned = False
+        self._statusitem_next_check = 0.0
         self._config_mtime = CONFIG_PATH.stat().st_mtime
         self.recorder = Recorder()
         self.recording = False
@@ -1285,8 +1869,11 @@ class YapApp(rumps.App):
         # panel (left-click) and keep the full menu on right/Control-click.
         if not self._click_installed:
             self._install_icon_click()
-        # Keep the rewrite chord alive (see _suppressor_check).
+        # Keep both taps alive (see _keytap_check / _suppressor_check).
+        self._keytap_check()
         self._suppressor_check()
+        # Keep the menu-bar icon present (see _statusitem_check).
+        self._statusitem_check()
         # Until onboarding is complete, greet the user with the welcome window
         # once the app's run loop is up (doing it here keeps it on the main
         # thread). Cleared immediately so it only opens once per launch.
@@ -1373,11 +1960,54 @@ class YapApp(rumps.App):
             rumps.MenuItem("Open config file…", callback=self.open_config_file),
             rumps.MenuItem("Restore default prompts", callback=self.restore_defaults),
             rumps.MenuItem("Reload settings", callback=self.reload_settings),
+            rumps.MenuItem("Reset menu bar icon", callback=self.reset_status_icon),
             rumps.MenuItem("Show welcome screen…", callback=self.show_onboarding),
+            rumps.MenuItem("Reset Yap completely…", callback=self.full_reset),
             None,
+            rumps.MenuItem(f"Yap {APP_VERSION} — “{APP_CODENAME}”"),  # no callback = greyed label
             rumps.MenuItem("Quit Yap", callback=rumps.quit_application),
         ]
         self.menu = items
+
+    def full_reset(self, _):
+        """Hand the user the full reset — the destructive half Yap won't do to
+        itself. It runs in Terminal, not silently in here, for two reasons: the
+        permission reset needs an administrator password, which you should only
+        ever type into something you can see; and you get to watch exactly what
+        is deleted. The script shipped inside the app is the same one in the
+        project's tools/ folder."""
+        script = resource_path("tools", "reset-yap.sh")
+        if not os.path.exists(script):
+            log("reset script missing from the bundle: %s" % script)
+            _alert("Reset script not found",
+                   "This build didn't ship tools/reset-yap.sh. Run it from the "
+                   "project folder instead.")
+            return
+        if not rumps.alert(
+                title="Reset Yap completely?",
+                message=("Terminal will open and walk through the reset: it deletes "
+                         "your Yap settings and API key on this Mac, clears its "
+                         "caches, and revokes its macOS permissions. The app itself "
+                         "is not deleted.\n\n"
+                         "You'll be asked to confirm there, and for your password "
+                         "(the Accessibility and Input Monitoring permissions live "
+                         "in a system database).\n\n"
+                         "Reboot afterwards, then open Yap for a clean first run."),
+                ok="Open Terminal", cancel="Cancel"):
+            return
+        try:
+            # Copy out of the bundle: Terminal can't always run a script from
+            # inside an .app, and the copy is what the user can re-read later.
+            dest = CONFIG_DIR / "reset-yap.sh"
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(script, dest)
+            os.chmod(dest, 0o755)
+            log("opening Terminal to run %s" % dest)
+            subprocess.Popen(["open", "-a", "Terminal", str(dest)])
+        except Exception:
+            log_exc("could not launch the reset script")
+            _alert("Couldn't start the reset",
+                   "Run it by hand instead:\n\nbash tools/reset-yap.sh")
 
     def set_api_key(self, _):
         """Quick dialog to paste the API key for the currently selected provider.
@@ -1467,6 +2097,8 @@ class YapApp(rumps.App):
             "input_device": self.config.get("input_device", ""),
             "input_devices": list_input_devices(),
             "modes": [dict(m) for m in self.config.get("modes", [])],
+            "version": APP_VERSION,
+            "codename": APP_CODENAME,
             # The shipped defaults, so the Settings UI can offer a per-mode
             # "Reset to default" (matched by the stable `key`).
             "default_modes": [
@@ -1534,6 +2166,23 @@ class YapApp(rumps.App):
             self._run_diag("hotkey", ctrl)
         elif action == "diag_api":
             self._run_diag("api", ctrl)
+        elif action == "diag_paste":
+            self._run_diag("paste", ctrl)
+        elif action == "permStatus":
+            # The "how to fix" panels ask for a fresh reading whenever they're
+            # opened, so the user sees the state as it is right now — not as it
+            # was when Settings was first shown.
+            snap = self._perm_snapshot()
+            if snap is not None:
+                ctrl.push_js("yapPerms", snap)
+        elif action == "openPermissionPane" and isinstance(payload, dict):
+            try:
+                import permissions
+                permissions.open_pane(payload.get("which"))
+            except Exception:
+                log_exc("failed to open permission pane from Settings")
+        elif action == "relaunchApp":
+            self._relaunch_app()
 
     # ---- Settings → Test / Diagnostics ----------------------------------
     def _diag_push(self, ctrl, obj):
@@ -1572,6 +2221,10 @@ class YapApp(rumps.App):
                 elif which == "api":
                     ok, msg = diag_api(self.config)
                     self._diag_push(ctrl, {"test": "api", "phase": "done",
+                                           "ok": ok, "msg": msg})
+                elif which == "paste":
+                    ok, msg = diag_paste()
+                    self._diag_push(ctrl, {"test": "paste", "phase": "done",
                                            "ok": ok, "msg": msg})
             except Exception as e:
                 log_exc("diagnostic %r failed" % which)
@@ -1844,12 +2497,167 @@ class YapApp(rumps.App):
             statusitem.setMenu_(None)             # detach so clicks fire our action
             webui.install_status_click(button, self.toggle_panel_click,
                                        self._show_status_menu)
+            self._force_statusitem_visible(statusitem)
             self._click_installed = True
             log("menu-bar icon: left-click → quick panel, right-click → menu")
+            # Record what the status item actually looks like to macOS. When
+            # someone reports "Yap is running but there's no icon", this line is
+            # the difference between diagnosing it and guessing.
+            try:
+                log("menu-bar icon state: visible=%s autosave=%r button=%s"
+                    % (statusitem.isVisible(), statusitem.autosaveName(),
+                       statusitem.button() is not None))
+            except Exception:
+                log("menu-bar icon state: could not be read")
         except Exception:
             # Leave _click_installed False so we retry; if it never succeeds the
             # menu simply stays as-is (nothing is lost).
             log_exc("failed to install icon click handler")
+
+    # ----- menu-bar icon health ------------------------------------------
+    #
+    # Yap can be running perfectly with no icon in the menu bar, and then there
+    # is no way to reach Settings or Quit. The cause is in rumps: it creates the
+    # status item and never calls setVisible_, and never gives it an autosave
+    # name. When the menu bar is full — routine on a laptop with a notch — macOS
+    # hides the item and REMEMBERS that, so the icon does not come back on later
+    # launches either. rumps 0.4.0 is the last release there will be, so this is
+    # fixed here rather than upstream.
+
+    STATUSITEM_AUTOSAVE = "YapStatusItem"
+
+    def _force_statusitem_visible(self, statusitem=None):
+        """Insist the status item is visible, and give it a name macOS can
+        remember it by. Safe to call repeatedly."""
+        try:
+            if statusitem is None:
+                statusitem = self._nsapp.nsstatusitem
+            if statusitem is None:
+                return False
+            # Give the item a name of our own. macOS does NOT leave this empty —
+            # it assigns a positional default ("Item-0"), which is shared with
+            # every other app that never named its item, so the position and
+            # visibility macOS remembers under it are not reliably ours. Set our
+            # name unconditionally; checking "is it empty first" never fires.
+            try:
+                if statusitem.autosaveName() != self.STATUSITEM_AUTOSAVE:
+                    statusitem.setAutosaveName_(self.STATUSITEM_AUTOSAVE)
+            except Exception:
+                pass  # older macOS, or rumps handed us something unexpected
+            try:
+                if not statusitem.isVisible():
+                    statusitem.setVisible_(True)
+                    log("the menu-bar icon was hidden — made it visible again")
+            except Exception:
+                pass
+            return bool(statusitem.button() is not None)
+        except Exception:
+            log_exc("could not check the menu-bar icon")
+            return False
+
+    def _statusitem_check(self):
+        """Watchdog for the menu-bar icon, called from _tick.
+
+        Re-asserts visibility (macOS can hide the item at any point, not only at
+        launch), and if the icon still isn't there a few seconds in, says so —
+        once — instead of leaving a running app with no way to reach it."""
+        now = time.time()
+        if now < self._statusitem_next_check:
+            return
+        self._statusitem_next_check = now + 1.0
+        try:
+            statusitem = getattr(self._nsapp, "nsstatusitem", None)
+        except Exception:
+            statusitem = None
+
+        if statusitem is None or statusitem.button() is None:
+            # The item never got created, or has gone away entirely.
+            if not self._statusitem_warned and now > self._statusitem_deadline:
+                self._statusitem_warned = True
+                log("MENU-BAR ICON MISSING: the status item does not exist.")
+                self._warn_no_icon()
+            return
+
+        visible = self._force_statusitem_visible(statusitem)
+        try:
+            visible = visible and bool(statusitem.isVisible())
+        except Exception:
+            pass
+
+        if visible:
+            self._statusitem_ready = True
+            return
+        # Still not showing after the grace period: macOS is refusing, which in
+        # practice means there is no room left in the menu bar.
+        if not self._statusitem_warned and now > self._statusitem_deadline:
+            self._statusitem_warned = True
+            log("MENU-BAR ICON MISSING: macOS will not show the status item "
+                "(the menu bar is most likely full).")
+            self._warn_no_icon()
+
+    def _warn_no_icon(self):
+        """Tell the user, once per launch, that Yap is running invisibly."""
+        try:
+            _alert(
+                "Yap is running, but its menu-bar icon isn’t showing",
+                "macOS won’t give Yap a spot in the menu bar — this normally "
+                "means the menu bar is full.\n\n"
+                "Make room by holding ⌘ and dragging an icon you don’t need out "
+                "of the menu bar, then use “Reset menu bar icon” from Yap’s menu "
+                "— or just quit and reopen Yap.\n\n"
+                "The hold-to-talk shortcut keeps working either way.")
+        except Exception:
+            log_exc("could not show the missing-icon warning")
+
+    def reset_status_icon(self, _=None):
+        """Menu action: clear the position macOS has remembered for our status
+        item and build a fresh one. For when the icon is stuck outside the
+        visible menu bar and forcing setVisible_ isn't enough on its own."""
+        try:
+            from AppKit import NSStatusBar
+            old = getattr(self._nsapp, "nsstatusitem", None)
+            # Forget the remembered position/visibility. Clear it under BOTH our
+            # own autosave name and whatever name the item currently carries —
+            # macOS hands out positional defaults like "Item-0", and a stale
+            # entry under that name is exactly what strands the icon offscreen.
+            names = {self.STATUSITEM_AUTOSAVE}
+            try:
+                if old is not None and old.autosaveName():
+                    names.add(str(old.autosaveName()))
+            except Exception:
+                pass
+            try:
+                from Foundation import NSUserDefaults
+                d = NSUserDefaults.standardUserDefaults()
+                for name in names:
+                    for k in ("NSStatusItem Preferred Position %s" % name,
+                              "NSStatusItem Visible %s" % name):
+                        d.removeObjectForKey_(k)
+                d.synchronize()
+                log("cleared the saved menu-bar position for: %s"
+                    % ", ".join(sorted(names)))
+            except Exception:
+                log_exc("could not clear the saved menu-bar position")
+            bar = NSStatusBar.systemStatusBar()
+            if old is not None:
+                bar.removeStatusItem_(old)
+            item = bar.statusItemWithLength_(-1)
+            self._nsapp.nsstatusitem = item
+            # Rebuild what the old item carried: icon, title and click routing.
+            self._click_installed = False
+            self._statusitem_warned = False
+            self._statusitem_deadline = time.time() + 5.0
+            self._nsapp.setStatusBarIcon()
+            self._nsapp.setStatusBarTitle()
+            item.setMenu_(self._statusmenu)
+            self._force_statusitem_visible(item)
+            self._install_icon_click()
+            log("rebuilt the menu-bar icon from scratch")
+            notify("Yap", "Menu-bar icon reset", "")
+        except Exception:
+            log_exc("could not reset the menu-bar icon")
+            notify("Yap", "Could not reset the menu-bar icon",
+                   "Quit and reopen Yap instead.")
 
     def toggle_panel_click(self):
         self.toggle_panel(None)
@@ -1964,13 +2772,40 @@ class YapApp(rumps.App):
             keyboard.Key.right: "right",
             keyboard.Key.down: "down",
         }
-        # Voice listener: LISTEN-ONLY (Input Monitoring), exactly as the working
-        # version. It must NOT suppress keys, so voice never depends on
-        # Accessibility — keep it free of darwin_intercept.
-        listener = keyboard.Listener(on_press=self._on_press,
-                                     on_release=self._on_release)
-        listener.daemon = True
-        listener.start()
+        # Voice listener: LISTEN-ONLY (Input Monitoring). It must NOT suppress
+        # keys, so voice never depends on Accessibility.
+        #
+        # We run our own tap rather than pynput's because pynput cannot recover
+        # when macOS switches a tap off — see QuartzKeyTap. pynput stays as the
+        # fallback for a Mac where Quartz somehow isn't importable, but there the
+        # old silent-death behaviour is still possible; nothing can be done about
+        # that from outside the library.
+        if Quartz is not None:
+            tap = QuartzKeyTap(self._on_press, self._on_release)
+            if tap.start():
+                self._keytap = tap
+                if QuartzKeyTap.input_monitoring_granted():
+                    log("hold-to-talk ACTIVE on Yap's own event tap "
+                        "(self-healing if macOS switches it off)")
+                    self._keytap_granted = True
+                else:
+                    # The tap exists but macOS will not feed it. Saying it is
+                    # "running" here would be the most misleading line in the
+                    # log — this is exactly the state where the icon is there,
+                    # nothing errors, and the hotkey does nothing.
+                    log("hold-to-talk INACTIVE — the event tap was created but "
+                        "Input Monitoring is not granted, so macOS sends it no "
+                        "keys. System Settings → Privacy & Security → Input "
+                        "Monitoring, switch Yap on; Yap picks it up within a "
+                        "few seconds, no restart needed.")
+            else:
+                log("Yap's own event tap could not start — falling back to pynput")
+        if self._keytap is None:
+            listener = keyboard.Listener(on_press=self._on_press,
+                                         on_release=self._on_release)
+            listener.daemon = True
+            listener.start()
+            self._listener = listener
 
         # Separate, dedicated tap JUST for the text-rewrite chord. darwin_intercept
         # makes this one an ACTIVE tap (Accessibility — already required to paste)
@@ -1981,6 +2816,7 @@ class YapApp(rumps.App):
         self._suppressor = None
         self._suppressor_warned = False
         self._suppressor_next_try = 0.0
+        self._suppressor_disabled = False
         if self._start_suppressor():
             log("text-rewrite chord ACTIVE (Right ⌘ + Right ⌥ + arrow)")
         else:
@@ -2020,6 +2856,62 @@ class YapApp(rumps.App):
             log_exc("text-rewrite suppressor tap could not start")
             return False
 
+    def _keytap_check(self):
+        """Keep the hold-to-talk tap alive. Called from _tick; cheap.
+
+        Two jobs. If the tap is up, re-enable it should macOS have switched it
+        off — the callback normally catches that itself, but only if it is still
+        being called, so this is the backstop. If the tap never started (Input
+        Monitoring not granted at launch), retry, so granting it later starts
+        working without quitting and reopening Yap."""
+        if Quartz is None:
+            return
+        now = time.time()
+        if self._keytap is not None:
+            # A tap whose run-loop thread has died delivers nothing and can
+            # never recover on its own; drop it so the branch below rebuilds it.
+            if not self._keytap.is_alive():
+                log("the keyboard event tap thread is gone — rebuilding it")
+                self._keytap = None
+                self._keytap_granted = False
+                self._keytap_next_try = 0.0
+                return
+            # Keep a live tap enabled — this is the recovery that makes the
+            # hotkey survive macOS switching the tap off mid-session.
+            self._keytap.ensure_enabled()
+            # A tap that exists but is starved of events (no Input Monitoring)
+            # has to be rebuilt once the permission arrives: macOS does not
+            # start feeding an existing tap retroactively.
+            if now < self._keytap_next_try:
+                return
+            self._keytap_next_try = now + 3.0
+            granted = QuartzKeyTap.input_monitoring_granted()
+            if granted and not self._keytap_granted:
+                self._keytap.stop()
+                fresh = QuartzKeyTap(self._on_press, self._on_release, quiet=True)
+                if fresh.start():
+                    self._keytap = fresh
+                    self._keytap_granted = True
+                    log("hold-to-talk is now ACTIVE (Input Monitoring granted)")
+            elif not granted and self._keytap_granted:
+                # Revoked while running — say so rather than going quiet.
+                self._keytap_granted = False
+                log("hold-to-talk INACTIVE — Input Monitoring was switched off "
+                    "for Yap.")
+            return
+        if now < self._keytap_next_try:
+            return
+        self._keytap_next_try = now + 3.0
+        # The tap could not be created at all. Retry regardless of what the
+        # permission API says: creating a tap is one cheap call, and failing
+        # costs nothing.
+        tap = QuartzKeyTap(self._on_press, self._on_release, quiet=True)
+        if tap.start():
+            self._keytap = tap
+            self._keytap_granted = QuartzKeyTap.input_monitoring_granted()
+            if self._keytap_granted:
+                log("hold-to-talk is now ACTIVE")
+
     def _suppressor_check(self):
         """Retry the rewrite tap while it's down, so granting Accessibility
         later starts working without quitting and reopening Yap. Called from
@@ -2030,8 +2922,18 @@ class YapApp(rumps.App):
         if now < self._suppressor_next_try:
             return
         self._suppressor_next_try = now + 3.0
-        if self._suppressor is not None and self._suppressor.is_alive():
+        if (self._suppressor is not None and self._suppressor.is_alive()
+                and not self._suppressor_disabled):
             return
+        if self._suppressor_disabled and self._suppressor is not None:
+            # A tap macOS switched off keeps its thread alive, so "is it alive?"
+            # can't tell us anything here. Tear it down and build a fresh one.
+            try:
+                self._suppressor.stop()
+            except Exception:
+                pass
+            self._suppressor = None
+            self._suppressor_disabled = False
         try:
             import permissions
             if permissions.accessibility_status() != "granted":
@@ -2054,6 +2956,14 @@ class YapApp(rumps.App):
         Everything else passes through untouched. Must never raise: on any error
         we return the event so a bug here can't eat the user's typing."""
         try:
+            # macOS switching this tap off. We can't re-enable it in place —
+            # pynput owns the tap handle and doesn't expose it — so flag it and
+            # let _suppressor_check rebuild the listener on its next pass.
+            if event_type in (Quartz.kCGEventTapDisabledByTimeout,
+                              Quartz.kCGEventTapDisabledByUserInput):
+                self._suppressor_disabled = True
+                log("macOS switched the text-rewrite tap off — rebuilding it")
+                return event
             vk_to_mode = getattr(self, "_text_arrow_vk_to_mode", None)
             if not vk_to_mode:
                 return event
@@ -2088,8 +2998,30 @@ class YapApp(rumps.App):
         return event
 
     def _on_press(self, key):
-        # Show every special key so we can confirm what keys report as.
-        if isinstance(key, keyboard.Key):
+        """Guarded entry point for a key press.
+
+        The guard is the point: under pynput, an exception raised in here does
+        not just lose one keystroke — pynput's _emitter catches it, calls stop()
+        on the listener, and the hotkey is dead for the rest of the session with
+        nothing logged. QuartzKeyTap guards its own callback too; this covers the
+        pynput fallback and anything that calls these handlers directly."""
+        try:
+            self._on_press_impl(key)
+        except Exception:
+            log_exc("error handling a key press (ignored)")
+
+    def _on_release(self, key):
+        """Guarded entry point for a key release. See _on_press."""
+        try:
+            self._on_release_impl(key)
+        except Exception:
+            log_exc("error handling a key release (ignored)")
+
+    def _on_press_impl(self, key):
+        # Every special key, when debugging. This used to log unconditionally,
+        # which by itself grew yap.log past 3 MB in ordinary use and buried the
+        # lines that matter. Set YAP_DEBUG_KEYS=1 to get it back.
+        if DEBUG_KEYS and isinstance(key, keyboard.Key):
             log("key pressed:", key)
         # Track modifier state. Command distinguishes the rewrite gesture (⌘⌥ +
         # arrow) from voice (⌥ + arrow), so we never start a recording when ⌘ held.
@@ -2137,20 +3069,39 @@ class YapApp(rumps.App):
         # just-saved setting. Arming for toggle happens on the first Option release.
         self._active_trigger_mode = self.config.get("trigger_mode", "hold")
         self._toggle_armed = False
+        # Opening the microphone must NOT happen here. This method runs on the
+        # CGEventTap callback thread, and macOS disables any event tap whose
+        # callback is slow — opening a CoreAudio input stream takes hundreds of
+        # milliseconds, more on newer macOS where the permission check sits on
+        # the same path. That is how the hotkey used to die permanently: the tap
+        # went silent, nothing raised, nothing was logged. Hand the slow part to
+        # a worker and return immediately.
+        self._record_start = time.time()
+        self._set_state("recording")  # _tick shows the live countdown
+        tail = ("— tap Right Option again to stop"
+                if self._active_trigger_mode == "toggle"
+                else "— keep holding Right Option, release it to finish")
+        log("RECORDING started for mode:", mode["name"],
+            "trigger:", self._active_trigger_mode, tail)
+        threading.Thread(target=self._open_microphone, daemon=True,
+                         name="yap-mic-open").start()
+
+    def _open_microphone(self):
+        """Open the input stream off the event-tap thread (see _on_press).
+
+        If the device can't be opened we have to undo the recording state that
+        _on_press optimistically set."""
         try:
             self.recorder.start(self.config.get("input_device", ""))
-            self._record_start = time.time()
-            self._set_state("recording")  # _tick shows the live countdown
-            tail = ("— tap Right Option again to stop"
-                    if self._active_trigger_mode == "toggle"
-                    else "— keep holding Right Option, release it to finish")
-            log("RECORDING started for mode:", mode["name"],
-                "trigger:", self._active_trigger_mode, tail)
         except Exception as e:
-            self.recording = False
-            self.active_mode = None
-            self._active_trigger_mode = "hold"
-            self._toggle_armed = False
+            with self._lock:
+                if not self.recording:
+                    return  # already stopped by a release; nothing to undo
+                self.recording = False
+                self.active_mode = None
+                self._active_trigger_mode = "hold"
+                self._toggle_armed = False
+            self._record_start = None
             self._set_state("idle")
             log("ERROR starting microphone:", e)
             # Don't fail silently — tell the user, since the most common cause is
@@ -2160,7 +3111,7 @@ class YapApp(rumps.App):
                    "Check that a mic is connected, then pick it in "
                    "Settings → Microphone.")
 
-    def _on_release(self, key):
+    def _on_release_impl(self, key):
         # Clear modifier state.
         if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
             self.ctrl_down = False
@@ -2193,13 +3144,30 @@ class YapApp(rumps.App):
             self._toggle_armed = False
             self._active_trigger_mode = "hold"
         self._record_start = None
-        wav_bytes = self.recorder.stop()
-        log("RECORDING stopped, audio bytes:", len(wav_bytes))
         mode = self.active_mode
         self.active_mode = None
         self._set_state("working")
-        # Do the network call off the main thread so the UI stays responsive.
-        threading.Thread(target=self._process, args=(wav_bytes, mode), daemon=True).start()
+        # Closing the stream is a PortAudio call and belongs off this thread for
+        # the same reason opening it does (see _on_press): _finish_recording runs
+        # on the event-tap callback thread, which must return immediately or
+        # macOS disables the tap. The worker now owns stop() as well as the
+        # network call.
+        threading.Thread(target=self._stop_and_process, args=(mode,),
+                         daemon=True, name="yap-process").start()
+
+    def _stop_and_process(self, mode):
+        """Close the microphone, then transcribe. Runs on a worker thread."""
+        try:
+            wav_bytes = self.recorder.stop()
+        except Exception:
+            # Recorder.stop() already guards PortAudio, so this is a last resort
+            # — but a recording that can't be closed must still not strand the
+            # UI in the "working" state forever.
+            log_exc("ERROR stopping the recorder")
+            self._set_state("idle")
+            return
+        log("RECORDING stopped, audio bytes:", len(wav_bytes))
+        self._process(wav_bytes, mode)
 
     def _process(self, wav_bytes, mode):
         delivered = False  # set when text was pasted, so we show the "done" check
@@ -2323,6 +3291,9 @@ class YapApp(rumps.App):
 
 
 if __name__ == "__main__":
+    # First thing, before anything that could fail: make sure a crash leaves a
+    # trace. Everything below this line is diagnosable; nothing above it is.
+    install_crash_handlers()
     if os.environ.get("YAP_SELFTEST") == "1":
         log("SELFTEST start. frozen=%r" % getattr(sys, "frozen", False))
         # Exercise BOTH providers' audio + text request paths with a dummy key
@@ -2442,6 +3413,27 @@ if __name__ == "__main__":
             except Exception:
                 log_exc("SELFTEST E2E FAIL")
         log("SELFTEST done")
+        sys.exit(0)
+    log_environment()
+    startup_repair()
+    if another_copy_is_running():
+        # Two copies with the same bundle id both grab the hotkeys, and macOS
+        # only honours the permissions granted to ONE of them — the classic
+        # "I allowed everything and it still does nothing". Refuse to be the
+        # second one rather than fight.
+        log("ANOTHER COPY OF YAP IS ALREADY RUNNING — quitting this one.")
+        try:
+            # Popen, not run: this process exits immediately and lets the
+            # dialog outlive it. "giving up after" makes sure an unattended
+            # Mac is never left with a modal stuck on screen.
+            subprocess.Popen(
+                ["osascript", "-e",
+                 'display alert "Yap is already running" message "Another copy of '
+                 'Yap is already open, and two copies fight over the keyboard '
+                 'shortcuts. Quit the other one (its icon is in the menu bar), '
+                 'then open this one again." as critical giving up after 60'])
+        except Exception:
+            pass
         sys.exit(0)
     log("starting. Hold Right Option (⌥) and speak. Watch these lines while you test.")
     YapApp().run()
