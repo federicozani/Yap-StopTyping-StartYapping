@@ -48,15 +48,44 @@
       <!-- VOICE & MODEL ------------------------------------------------- -->
       <section class="pane" id="pane-voice">
         <div class="section-title">Provider &amp; model</div>
+        <style>
+          /* Per-provider key cards. The one you're actually using is lit up;
+             the other stays visible (and saved) but out of the way. */
+          .key-block { border:1px solid var(--hairline-08); border-radius:var(--r-card);
+            padding:14px 16px; margin-bottom:14px; background:var(--white); }
+          .key-block.is-active { border-color:var(--brand-purple);
+            background:var(--tint-lavender); box-shadow:0 0 0 2px rgba(155,69,232,.10); }
+          .key-block:not(.is-active) { opacity:.72; }
+          .key-head { display:flex; align-items:center; gap:10px; margin-bottom:9px; }
+          .key-head .field-label { margin:0; }
+          .key-chip { margin-left:auto; font-size:11px; font-weight:700; letter-spacing:.2px;
+            padding:3px 10px; border-radius:var(--r-pill);
+            background:var(--chip-neutral); color:var(--ink-550); }
+          .key-chip[data-state="active"]  { background:#E4F7E7; color:#137333; }
+          .key-chip[data-state="missing"] { background:#FDE7E6; color:#C5221F; }
+          /* The "why no Claude?" note — deliberately plain and always visible. */
+          .prov-note { margin:0 0 22px; background:var(--tint-lavender-2);
+            border:1px solid var(--purple-field); border-radius:var(--r-card);
+            padding:13px 15px; }
+          .prov-note b { color:var(--ink-900); }
+          .prov-note p { margin:0; font-size:13px; line-height:1.55; color:var(--ink-600); }
+        </style>
         <div class="section-desc">Pick your AI provider and model, and paste the matching API key.
           Voice sends your recording straight to the model in one call, so only audio-capable
-          models are listed. Both keys are stored, so you can switch any time.</div>
-        <div style="margin-bottom:22px">
+          models are listed. Each provider's key is stored separately, so you can switch any time
+          without pasting again.</div>
+        <div style="margin-bottom:16px">
           <label class="field-label" for="provider">Provider</label>
           <select class="select" id="provider" style="min-width:240px">
             <option value="gemini">Google Gemini</option>
             <option value="openai">OpenAI</option>
           </select>
+        </div>
+        <div class="prov-note">
+          <p><b>Why not Claude / Anthropic?</b> Claude can’t accept audio, and Yap is built around
+            one fast, native voice-to-text call. Supporting it would need a slower separate
+            transcription step, so it’s intentionally left out. Gemini and OpenAI both handle
+            audio natively.</p>
         </div>
         <div style="margin-bottom:22px">
           <label class="field-label" for="model">Model</label>
@@ -64,11 +93,16 @@
           <input class="field" id="model-custom" autocomplete="off" spellcheck="false"
                  style="margin-top:8px" placeholder="…or type any model id">
           <div class="row" style="border:none;padding:8px 0 0">
-            <div class="help">Only audio-capable models work for voice. Leave the box empty to use the dropdown.</div>
+            <div class="help">This model does both jobs: your voice recordings and the text
+              <b>Rewrite</b> buttons. Only audio-capable models are listed — leave the box empty
+              to use the dropdown.</div>
           </div>
         </div>
-        <div style="margin-bottom:22px">
-          <label class="field-label" for="api-gemini">Gemini API key</label>
+        <div class="key-block" id="key-block-gemini">
+          <div class="key-head">
+            <label class="field-label" for="api-gemini">Gemini API key</label>
+            <span class="key-chip" data-key-chip>No key yet</span>
+          </div>
           <div class="secure-wrap">
             <input class="field" id="api-gemini" type="password" autocomplete="off" spellcheck="false"
                    placeholder="Paste your free key from aistudio.google.com">
@@ -78,15 +112,19 @@
             <div class="help">Free key at aistudio.google.com — stored only on this Mac.</div>
           </div>
         </div>
-        <div>
-          <label class="field-label" for="api-openai">OpenAI API key</label>
+        <div class="key-block" id="key-block-openai">
+          <div class="key-head">
+            <label class="field-label" for="api-openai">OpenAI API key</label>
+            <span class="key-chip" data-key-chip>No key yet</span>
+          </div>
           <div class="secure-wrap">
             <input class="field" id="api-openai" type="password" autocomplete="off" spellcheck="false"
-                   placeholder="Paste your key from platform.openai.com">
+                   placeholder="Paste your key from platform.openai.com (starts with sk-)">
             <button class="eye" data-eye="api-openai" title="Show / hide">👁</button>
           </div>
           <div class="row" style="border:none;padding:8px 0 0">
-            <div class="help">Key from platform.openai.com — stored only on this Mac.</div>
+            <div class="help">Key from platform.openai.com/api-keys — pay-as-you-go, stored only
+              on this Mac.</div>
           </div>
         </div>
         <div class="toolbar">

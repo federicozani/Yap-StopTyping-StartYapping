@@ -411,9 +411,10 @@ OLD_CONFIG_DIR = Path.home() / ".parla"
 OLD_CONFIG_PATH = OLD_CONFIG_DIR / "config.json"
 OLD_LOG_PATH = OLD_CONFIG_DIR / "parla.log"
 
-# Where onboarding sends users to create a free Gemini API key (the key page,
-# not the Studio home, so the "create key" button is right there).
+# Where onboarding sends users to create an API key — the key page itself for
+# each provider (not the home page), so the "create key" button is right there.
 AISTUDIO_URL = "https://aistudio.google.com/apikey"
+OPENAI_KEY_URL = "https://platform.openai.com/api-keys"
 
 
 def resource_path(*parts):
@@ -726,7 +727,8 @@ DEFAULT_CONFIG = {
     "provider": "gemini",
     # One key + model per provider, so you can switch without re-pasting. Only
     # audio-capable models belong here (all Gemini models; OpenAI's
-    # gpt-4o-*-audio-preview chat models) because voice is a single native call.
+    # gpt-4o-*-audio-preview pair and the newer gpt-audio family) because voice
+    # is a single native call: the recording goes straight to the model.
     "providers": {
         "gemini": {
             "api_key": "PASTE_YOUR_GEMINI_API_KEY_HERE",
@@ -977,10 +979,16 @@ def load_config():
 # Yap supports two providers, both reached with ONE native request that takes
 # the recording and returns finished text — no separate transcription step:
 #   - Google Gemini  (any multimodal Gemini model; audio via inline_data)
-#   - OpenAI         (the gpt-4o-*-audio-preview chat models; audio via the
+#   - OpenAI         (gpt-4o-audio-preview / gpt-audio chat models; audio via the
 #                     chat `input_audio` content part)
 # A shared retry/backoff core is used by both so a recording is never lost just
 # because the model was briefly busy.
+#
+# Deliberately NOT supported: Anthropic/Claude. Claude's API takes no audio, so
+# Yap would have to run a separate speech-to-text call first and then a second
+# call to format the result — two round trips instead of one, which is exactly
+# the latency Yap is built to avoid. Settings → Provider & model says the same
+# thing to the user.
 # ---------------------------------------------------------------------------
 
 # --- HTTPS plumbing -------------------------------------------------------
@@ -1181,7 +1189,8 @@ def transcribe(wav_bytes: bytes, prompt: str, provider: str, api_key: str,
                model: str, retries: int = MAX_ATTEMPTS) -> str:
     """Send WAV audio + an instruction to the chosen provider in a single
     native call and return the finished text. Only audio-capable models work
-    here (all Gemini models; OpenAI's gpt-4o-*-audio-preview chat models)."""
+    here (all Gemini models; OpenAI's gpt-4o-audio-preview,
+    gpt-4o-mini-audio-preview, gpt-audio-1.5 and gpt-audio chat models)."""
     audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
     if provider == "openai":
         messages = [{"role": "user", "content": [
@@ -2331,12 +2340,17 @@ class YapApp(rumps.App):
         elif action == "relaunchApp":
             self._relaunch_app()
         elif action == "getApiKey":
-            # Open Google AI Studio so the user can create a free Gemini API key.
+            # Open the key page for whichever provider the onboarding step has
+            # selected — AI Studio for Gemini, the OpenAI dashboard for OpenAI.
             # Opened via the browser (not the web view, which has no nav delegate).
+            prov = ""
+            if isinstance(payload, dict):
+                prov = (payload.get("provider") or "").strip()
+            url = OPENAI_KEY_URL if prov == "openai" else AISTUDIO_URL
             try:
-                subprocess.run(["open", AISTUDIO_URL], check=False)
+                subprocess.run(["open", url], check=False)
             except Exception:
-                log_exc("failed to open AI Studio")
+                log_exc("failed to open the provider key page")
 
     # ----- onboarding permission walk-through ----------------------------
 

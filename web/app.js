@@ -27,20 +27,40 @@ var DEFAULT_REWRITE_PROMPT =
   "meaning and key points. Return only the rewritten text, with no preamble " +
   "or commentary. Do not use em dashes; use commas, colons, or separate " +
   "sentences instead.";
-// Audio-capable models per provider (voice is a single native call). The
-// free-text box in Settings lets you type any other model id.
+// Audio-capable models per provider. Voice is ONE native call — the recording
+// goes straight to the model — so a model that can't hear is no use here.
+// OpenAI's audio-in chat models are the gpt-4o-*-audio-preview pair plus the
+// newer gpt-audio family. The free-text box in Settings takes any other id.
 var PROVIDER_MODELS = {
   gemini: ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.1-pro",
            "gemini-2.5-flash", "gemini-2.5-pro"],
-  openai: ["gpt-4o-audio-preview", "gpt-4o-mini-audio-preview"]
+  openai: ["gpt-4o-audio-preview", "gpt-4o-mini-audio-preview",
+           "gpt-audio-1.5", "gpt-audio"]
 };
 var PROVIDER_DEFAULT_MODEL = { gemini: "gemini-3.1-flash-lite", openai: "gpt-4o-audio-preview" };
 // Models flagged "(Recommended)" in the picker (the dropdown label only — the
 // stored value is always the bare model id).
-var RECOMMENDED_MODEL = { gemini: "gemini-3.1-flash-lite" };
+var RECOMMENDED_MODEL = { gemini: "gemini-3.1-flash-lite", openai: "gpt-4o-audio-preview" };
+// A short plain-language hint shown after a model id in the picker.
+var MODEL_NOTE = {
+  "gpt-4o-mini-audio-preview": "cheapest",
+  "gpt-audio-1.5": "newest",
+  "gpt-audio": "newer"
+};
 function modelLabel(provider, id) {
-  return id + (RECOMMENDED_MODEL[provider] === id ? "  (Recommended)" : "");
+  var bits = [];
+  if (RECOMMENDED_MODEL[provider] === id) bits.push("Recommended");
+  if (MODEL_NOTE[id]) bits.push(MODEL_NOTE[id]);
+  return id + (bits.length ? "  (" + bits.join(" · ") + ")" : "");
 }
+// Where each provider's key comes from — used for placeholders, help text and
+// the "create a key" link in onboarding.
+var PROVIDER_INFO = {
+  gemini: { name: "Google Gemini", site: "aistudio.google.com",
+            link: "Create a free Google Gemini key →" },
+  openai: { name: "OpenAI", site: "platform.openai.com",
+            link: "Create an OpenAI key →" }
+};
 var MODE_EMOJI = ["🧹", "📝", "🎙️", "🌍", "✨", "💬", "📌", "⚡"];
 
 var CONFIG = { provider: "gemini",
@@ -184,6 +204,26 @@ function fillModelSelect(provider) {
   if (custom) custom.value = inList ? "" : stored;
 }
 
+// Mark which provider's key is actually in use and whether each one is filled
+// in, so it's obvious at a glance that the two keys are stored separately.
+function paintKeyBlocks(active) {
+  ["gemini", "openai"].forEach(function (p) {
+    var block = document.getElementById("key-block-" + p);
+    if (!block) return;
+    var field = document.getElementById("api-" + p);
+    var has = !!(field && field.value.trim());
+    block.classList.toggle("is-active", p === active);
+    var chip = block.querySelector("[data-key-chip]");
+    if (chip) {
+      chip.textContent = (p === active)
+        ? (has ? "In use" : "In use — key needed")
+        : (has ? "Saved, not in use" : "No key yet");
+      chip.dataset.state = (p === active)
+        ? (has ? "active" : "missing") : (has ? "saved" : "empty");
+    }
+  });
+}
+
 function fillVoice() {
   var prov = (CONFIG.provider === "openai") ? "openai" : "gemini";
   var ps = document.getElementById("provider");
@@ -191,6 +231,7 @@ function fillVoice() {
   document.getElementById("api-gemini").value = maskedKey(CONFIG.providers.gemini.api_key);
   document.getElementById("api-openai").value = maskedKey(CONFIG.providers.openai.api_key);
   fillModelSelect(prov);
+  paintKeyBlocks(prov);
 }
 
 function fillRecording() {
@@ -346,7 +387,17 @@ function initSettings() {
       var custom = (document.getElementById("model-custom").value || "").trim();
       CONFIG.providers[old].model = custom || sel.value || PROVIDER_DEFAULT_MODEL[old];
     }
-    fillModelSelect(prov.value === "openai" ? "openai" : "gemini");
+    var now = (prov.value === "openai") ? "openai" : "gemini";
+    fillModelSelect(now);
+    paintKeyBlocks(now);
+  });
+  // Typing in either key field refreshes its "In use / Saved / No key yet" chip.
+  ["gemini", "openai"].forEach(function (p) {
+    var f = document.getElementById("api-" + p);
+    if (f) f.addEventListener("input", function () {
+      var ps = document.getElementById("provider");
+      paintKeyBlocks(ps && ps.value === "openai" ? "openai" : "gemini");
+    });
   });
   // Each eye button toggles the visibility of its own key field (data-eye=id).
   document.querySelectorAll(".eye").forEach(function (eye) {
@@ -505,9 +556,22 @@ function initOnboarding() {
     });
     modelSel.value = PROVIDER_DEFAULT_MODEL[provider] || list[0] || "";
   }
+  // The key field, its placeholder and the "create a key" link all follow the
+  // provider picker, so the step never points at the wrong site.
+  function paintOnbProvider(provider) {
+    var info = PROVIDER_INFO[provider] || PROVIDER_INFO.gemini;
+    var keyField = document.getElementById("onb-key");
+    if (keyField) keyField.placeholder = "Paste your " + info.name + " key from " + info.site;
+    var link = document.getElementById("onb-getkey");
+    if (link) link.textContent = info.link;
+  }
   if (provSel && modelSel) {
     fillOnbModels(provSel.value);
-    provSel.addEventListener("change", function () { fillOnbModels(provSel.value); });
+    paintOnbProvider(provSel.value);
+    provSel.addEventListener("change", function () {
+      fillOnbModels(provSel.value);
+      paintOnbProvider(provSel.value);
+    });
   }
 
   document.querySelectorAll("[data-next]").forEach(function (b) {
@@ -523,7 +587,10 @@ function initOnboarding() {
     b.addEventListener("click", function () { send("openSettings"); });
   });
   document.querySelectorAll("[data-getkey]").forEach(function (b) {
-    b.addEventListener("click", function (e) { e.preventDefault(); send("getApiKey"); });
+    b.addEventListener("click", function (e) {
+      e.preventDefault();
+      send("getApiKey", { provider: provSel ? provSel.value : "gemini" });
+    });
   });
   // Eye toggles reveal/hide the key field.
   document.querySelectorAll(".eye").forEach(function (eye) {
