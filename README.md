@@ -8,6 +8,47 @@ A tiny macOS menu-bar app that turns your voice into clean, finished text — an
 
 ---
 
+## Read this first (important)
+
+Yap is a small app made by me, Federico, not by a company or an Apple-verified developer. So the first time you open it, macOS will warn you that it is from an "unidentified developer" and may not let you open it with a normal double-click. This is expected and normal for an app shared directly like this.
+
+To open it the first time:
+
+1. Right-click (or Control-click) `Yap.app` and choose **Open**, then click **Open** again in the box that appears.
+2. If macOS still blocks it, go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** next to the message about Yap.
+3. If you are updating Yap, right click on the fish icon on the tool bar, select "Reset Yap completely" and follow the instructions. This will solve all the permission problems
+
+You only have to do this once. After that it opens normally.
+
+## Install
+
+1. Download `Yap.zip` from the [latest release](https://github.com/federicozani/Yap-StopTyping-StartYapping/releases/latest) (under **Assets**). The app runs on Apple Silicon Macs (M1 or newer).
+2. Unzip the download. You will get `Yap.app`.
+3. Drag `Yap.app` into your **Applications** folder.
+4. Open it using the right-click method described at the top.
+5. The first time, Yap walks you through granting a few permissions and adding your key.
+
+## Get your free key
+
+Yap uses Google's Gemini, and each person uses their own key, which stays on your Mac.
+
+1. Get a free key at https://aistudio.google.com/apikey
+2. Paste it into Yap when it asks during setup.
+
+Optional: you can enable billing on your Google account for faster, higher-limit responses, or use an OpenAI key instead. Both are set in Settings.
+
+## Permissions, and why each one is needed
+
+Yap asks for three macOS permissions during setup. All three are required for the main feature to work:
+
+- **Microphone**: to hear you while you talk.
+- **Input Monitoring**: to detect the shortcut key you hold.
+- **Accessibility**: to paste the finished text into whatever app you are in.
+
+Grant them when asked, or later in System Settings > Privacy & Security. If a step asks you to quit and reopen the app, do it; that only happens once.
+
+---
+
 ## What it is
 
 Yap lives in your menu bar. Hold a key, talk, let go — Yap sends your recording to an AI model
@@ -48,7 +89,7 @@ an email, make a to-do list). Every built-in button has a **Reset to default** i
 - Python 3.9+ (only to run from source or build the app)
 - A free Google Gemini key (or an OpenAI key)
 
-## Install
+## Build from source
 
 **Run from source:**
 
@@ -80,7 +121,7 @@ Yap never ships with a key, and your key never leaves your Mac except to call yo
 
 Your key is stored only in `~/.yap/config.json` on your machine.
 
-## Permissions (and why each is needed)
+## Permissions in detail
 
 macOS asks for three permissions the first time you run Yap. Yap uses them **only** for the
 hold-to-talk workflow — nothing else:
